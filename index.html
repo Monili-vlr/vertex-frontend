@@ -473,7 +473,10 @@ body {
     max-width: 100%;
     margin-left: auto;
     margin-right: auto;
-    flex-basis: 100%;
+    /* Il messaggio e' una colonna flex: qui "flex-basis" e' l'ALTEZZA, e il 100%
+       ereditato faceva calcolare al video l'altezza del messaggio intero, da cui
+       una larghezza enorme e lo sbordamento sopra gli altri messaggi. */
+    flex-basis: auto;
     flex-shrink: 0;
     /* Altezza del riquadro video: aspect-ratio invece del trucco padding 56.25%/height 0,
        che il browser non conta nell'altezza del messaggio -> il video usciva sopra la chat. */
