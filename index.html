@@ -462,7 +462,13 @@ body {
 
 .yt-embed-wrap {
     position: relative;
-    width: 100%;
+    /* Il video non deve prendersi tutta l'altezza della chat: sotto deve restare
+       spazio per il messaggio successivo e per "Elaborazione". Larghezza piena
+       finche' l'altezza sta sotto il tetto, poi si rimpicciolisce mantenendo 16:9. */
+    width: min(100%, calc(42vh * 16 / 9));
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
     flex-basis: 100%;
     flex-shrink: 0;
     /* Altezza del riquadro video: aspect-ratio invece del trucco padding 56.25%/height 0,
@@ -476,6 +482,7 @@ body {
     background: #000;
 }
 @supports not (aspect-ratio: 1 / 1) { .yt-embed-wrap { padding-bottom: 56.25%; height: 0; } }
+@supports (width: min(100%, 10svh)) { .yt-embed-wrap { width: min(100%, calc(42svh * 16 / 9)); } }
 .yt-embed-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
 .yt-embed-wrap > div { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 /* Pulsante fullscreen "finto" (controllato da noi, aggira il blocco di Wix) */
