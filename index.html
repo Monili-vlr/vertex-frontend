@@ -1805,6 +1805,7 @@ body {
             const userEmail = getIdentidad();
             let sessionsUrl = `${API_BASE}/api/sessions?local_id=${encodeURIComponent(LOCAL_ID)}`;
             if (userEmail) { sessionsUrl += `&user_email=${encodeURIComponent(userEmail)}`; }
+            else { const ids = getLocalSessionIds(); if (ids.length) sessionsUrl += `&session_ids=${encodeURIComponent(ids.join(','))}`; }
             const res = await fetchConRitenti(sessionsUrl);
             const data = await res.json();
             grid.innerHTML = '';
