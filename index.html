@@ -281,6 +281,10 @@ body {
 .chat-messages { flex-grow: 1; min-height: 0; padding: 2px 1px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: clamp(14px, calc(3.4 * var(--u)), 22px); background-color: transparent; scrollbar-width: none; scroll-behavior: smooth; }
 .chat-messages::-webkit-scrollbar { display: none; }
 .message { max-width: 100%; font-size: clamp(14.5px, calc(3.2 * var(--u)), 16.5px); line-height: 1.62; display: flex; flex-direction: column; gap: 5px; }
+/* Il messaggio non deve restringersi dentro la colonna della chat: se si
+   restringe, il video (altezza calcolata) esce e copre input e messaggi.
+   Questo e' layout dei messaggi: NON tocca la logica di scorrimento. */
+.chat-messages > .message { flex-shrink: 0; }
 .bot-message { align-self: stretch; width: 100%; background-color: transparent; color: var(--text); border: none; padding: 0; box-shadow: none; font-family: var(--font); }
 
 /* card: griglia [pallino giallo | testo]; blocchi aggiunti (bottoni, card,
@@ -4628,13 +4632,26 @@ body {
                 // FIX: alcuni browser mobili non ricalcolano le dimensioni del
                 // video finché non c'è un resize (prima toccava ruotare lo
                 // schermo). Lanciamo un resize artificiale per forzarlo subito.
-                setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch(e){} }, 60);
-                setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch(e){} }, 250);
+                // Il solo evento 'resize' non bastava: al PRIMO tocco su mobile il
+                // player restava della misura vecchia finche' non si ruotava lo
+                // schermo. Ora si ridimensiona il player davvero (setSize), dopo
+                // che il browser ha applicato le nuove misure del riquadro.
+                const risizza = () => {
+                    try { window.dispatchEvent(new Event('resize')); } catch(e){}
+                    try {
+                        const p = wrap._ytPlayer;
+                        const r = wrap.getBoundingClientRect();
+                        if (p && typeof p.setSize === 'function' && r.width > 0) p.setSize(Math.round(r.width), Math.round(r.height));
+                    } catch(e){}
+                };
+                requestAnimationFrame(() => requestAnimationFrame(risizza));
+                setTimeout(risizza, 250);
+                setTimeout(risizza, 600);
             };
             wrap.appendChild(fsBtn);
             messageEl.appendChild(wrap);
             const build = () => {
-                new YT.Player(playerId, {
+                wrap._ytPlayer = new YT.Player(playerId, {
                     videoId: id,
                     host: 'https://www.youtube-nocookie.com',
                     playerVars: { rel: 0, modestbranding: 1, playsinline: 1, fs: 0 },
