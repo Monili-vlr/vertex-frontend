@@ -2201,7 +2201,7 @@ body {
         addMessageToChat(text, 'user-message');
         conversationHistory.push({ role: "user", content: text });
         salvaSpecchioLocale();
-        if (userInput) userInput.disabled = true;
+        window.__botOccupato = true;
         if (sendBtn) { sendBtn.disabled = true; sendBtn.style.display = 'none'; }
         if (micBtn) micBtn.classList.add('mic-blink');
         if (stopBtn) stopBtn.style.display = 'flex';
@@ -2243,7 +2243,7 @@ body {
             transformTypingIntoMessage(typingIndicator, error.name === 'AbortError' ? '⛔ Generación interrumpida.' : ((UI_STRINGS[activeLanguageCode] || UI_DEFAULT).errConexion || '⚠️ Error de conexión. Verifica tu conexión y pulsa el icono ↻ sobre tu mensaje para reintentar.'), false, false);
         } finally {
             currentAbortController = null;
-            if (userInput) userInput.disabled = false;
+            window.__botOccupato = false;
             if (sendBtn) { sendBtn.disabled = false; sendBtn.style.display = 'flex'; }
             if (stopBtn) stopBtn.style.display = 'none';
             if (micBtn) micBtn.classList.remove('mic-blink');
@@ -3415,7 +3415,7 @@ body {
         if (!PROACTIVE_ENABLED) return;
         if (!forzado && (proactiveDisabled || proactiveDone)) return;
         if (!forzado && proactiveFired) return;
-        if (userInput && userInput.disabled) return;          // bot occupato
+        if (window.__botOccupato) return;                    // bot occupato
         const franja = franjaHoraria() || 'comida'; // in /test, default pranzo
         if (!forzado && !franjaHoraria()) return;
         proactiveDone = true;
@@ -3564,6 +3564,7 @@ body {
 
     async function handleSendMessage() {
         if (!userInput) return;
+        if (window.__botOccupato) return; // generazione in corso: il testo resta scritto
         const text = userInput.value.trim();
         // Comando di test: forza il saluto proattivo ignorando ora e limiti.
         // Tollerante: con o senza "s", maiuscole/minuscole, spazi attorno.
@@ -3657,7 +3658,9 @@ body {
         userInput.value = '';
         userInput.style.height = (window.innerWidth <= 600) ? '40px' : '42px';
         if (clearInputBtn) clearInputBtn.classList.remove('visible');
-        userInput.disabled = true;
+        // Il campo resta SCRIVIBILE durante la generazione (si puo' preparare il
+        // messaggio successivo); l'invio pero' aspetta la fine.
+        window.__botOccupato = true;
         if (sendBtn) { sendBtn.disabled = true; sendBtn.style.display = 'none'; }
         micBtn.classList.add('mic-blink');
         const stopBtn = document.getElementById('stop-btn');
@@ -3752,7 +3755,7 @@ body {
             else { transformTypingIntoMessage(typingIndicator, ((UI_STRINGS[activeLanguageCode] || UI_DEFAULT).errConexion || '⚠️ Error de conexión. Verifica tu conexión y pulsa el icono ↻ sobre tu mensaje para reintentar.'), false, false); }
         } finally {
             currentAbortController = null;
-            userInput.disabled = false;
+            window.__botOccupato = false;
             if (sendBtn) { sendBtn.disabled = false; sendBtn.style.display = 'flex'; }
             if (stopBtn) stopBtn.style.display = 'none';
             micBtn.classList.remove('mic-blink');
@@ -4237,7 +4240,8 @@ body {
 
         // Reset anteprima e input.
         removeSelectedImage();
-        if (userInputEl) { userInputEl.value = ''; userInputEl.style.height = (window.innerWidth <= 600) ? '40px' : '42px'; userInputEl.disabled = true; }
+        if (userInputEl) { userInputEl.value = ''; userInputEl.style.height = (window.innerWidth <= 600) ? '40px' : '42px'; }
+        window.__botOccupato = true;
         if (clearInputBtn) clearInputBtn.classList.remove('visible');
         if (sendBtnEl) { sendBtnEl.disabled = true; sendBtnEl.style.display = 'none'; }
         if (micBtnEl) micBtnEl.classList.add('mic-blink');
@@ -4271,7 +4275,7 @@ body {
             else { transformTypingIntoMessage(typingIndicator, ((UI_STRINGS[activeLanguageCode] || UI_DEFAULT).errConexion || '⚠️ Error de conexión. Verifica tu conexión y pulsa el icono ↻ sobre tu mensaje para reintentar.'), false, false); }
         } finally {
             currentAbortController = null;
-            if (userInputEl) userInputEl.disabled = false;
+            window.__botOccupato = false;
             if (sendBtnEl) { sendBtnEl.disabled = false; sendBtnEl.style.display = 'flex'; }
             if (stopBtnEl) stopBtnEl.style.display = 'none';
             if (micBtnEl) micBtnEl.classList.remove('mic-blink');
