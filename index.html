@@ -463,6 +463,11 @@ body {
 
 .calendly-btn { display: inline-block; justify-self: start; margin-top: 12px; padding: 12px 24px; background: var(--red); color: #FFFFFF; border: 1px solid var(--red); border-radius: 999px; font-family: var(--font-caps); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: calc(.14em * var(--tr)); text-decoration: none; cursor: pointer; transition: background .2s; box-shadow: none; align-self: flex-start; }
 .calendly-btn:hover { background-color: #B30F15; }
+.reserva-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.reserva-btn { display: inline-block; padding: 10px 18px; background: var(--red); color: #FFFFFF; border: 1px solid var(--red); border-radius: 999px; font-family: var(--font-caps); font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: calc(.1em * var(--tr)); text-decoration: none; cursor: pointer; transition: background .2s; }
+.reserva-btn:hover { background-color: #B30F15; }
+.reserva-btn.secondary { background: transparent; color: var(--red); }
+.reserva-btn.secondary:hover { background: rgba(200, 16, 46, 0.06); }
 
 .yt-embed-wrap {
     position: relative;
@@ -3885,6 +3890,48 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         wrapper.appendChild(a);
     }
 
+    // ---- PRENOTAZIONE: [RESERVA: url | etichetta] -> pulsante ----
+    // Solo https e solo piattaforme di prenotazione note o Google Maps: il
+    // marcatore arriva dal modello, quindi l'indirizzo non e' mai fidato a priori.
+    const RESERVA_REGEX = /\[RESERVA:\s*([^\]|]+?)\s*(?:\|\s*([^\]]*))?\]/gi;
+    const RESERVA_DOMINI = ['thefork.es', 'thefork.com', 'eltenedor.es', 'covermanager.com', 'opentable.es', 'opentable.com', 'google.com', 'maps.google.com'];
+    function reservaUrlOk(u) {
+        try {
+            const x = new URL(u);
+            if (x.protocol !== 'https:') return false;
+            const h = x.hostname.replace(/^www\./, '');
+            if (h === 'google.com' && !x.pathname.startsWith('/maps')) return false;
+            return RESERVA_DOMINI.some(d => h === d || h.endsWith('.' + d));
+        } catch (e) { return false; }
+    }
+    function extractReservaLinks(text) {
+        const reservas = [];
+        const cleanText = String(text || '').replace(RESERVA_REGEX, (m, url, label) => {
+            url = (url || '').trim();
+            if (reservaUrlOk(url) && reservas.length < 3) reservas.push({ url, label: (label || '').trim().slice(0, 60) });
+            return '';
+        }).replace(/\n{3,}/g, '\n\n').trim();
+        return { cleanText, reservas };
+    }
+    function injectReservaButtons(messageEl, reservas) {
+        if (!messageEl || !reservas || !reservas.length) return;
+        if (messageEl.querySelector('.reserva-row')) return; // evita doppioni
+        const wrapper = messageEl.querySelector('.message-content-wrapper');
+        if (!wrapper) return;
+        const row = document.createElement('div');
+        row.className = 'reserva-row';
+        reservas.forEach((r, i) => {
+            const a = document.createElement('a');
+            a.className = 'reserva-btn' + (i > 0 ? ' secondary' : '');
+            a.href = r.url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = r.label || 'Reservar';
+            row.appendChild(a);
+        });
+        wrapper.appendChild(row);
+    }
+
     // ---- DEMO CHECKOUT: estrae [CTA: url] e mostra un finto flusso di pagamento ----
     // (non si collega a nessun pagamento reale; e' solo per la demo)
     const CTA_REGEX = /\[CTA:\s*([^\]]+)\]/i;
@@ -4068,7 +4115,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: cleanCalendly, calendlyUrl } = extractCalendlyLink(imgCleaned);
         const { cleanText: cleanFinal0, videoIds } = extractYouTubeLinks(cleanCalendly);
         // estrai il marcatore [CTA: url] del pedido -> diventera' un checkout demo
-        const { cleanText: cleanFinal, ctaUrl } = extractCTALink(cleanFinal0);
+        const { cleanText: cleanFinalR, ctaUrl } = extractCTALink(cleanFinal0);
+        const { cleanText: cleanFinal, reservas } = extractReservaLinks(cleanFinalR);
         let currentText = textSpan.innerText;
         const deleteInterval = setInterval(() => {
             if (!typingEl.isConnected) { clearInterval(deleteInterval); activeTypingIntervals = activeTypingIntervals.filter(id => id !== deleteInterval); return; }
@@ -4147,6 +4195,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                         if (calendlyUrl) { injectCalendlyButton(typingEl, calendlyUrl); autoScroll(cm); }
                         if (videoIds && videoIds.length) { injectYouTubeEmbed(typingEl, videoIds); autoScroll(cm); }
                         if (ctaUrl) { injectCheckoutDemo(typingEl, ctaUrl); autoScroll(cm); }
+                        if (reservas && reservas.length) { injectReservaButtons(typingEl, reservas); autoScroll(cm); }
                         // fallback: SOLO se restano davvero segnaposto §§IMGn§§ non
                         // sostituiti (es. typing interrotto). Durante il typing sopra
                         // (riga §§IMG) le immagini vengono gia inserite: richiamare qui
@@ -4178,7 +4227,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: imgCleanedMsg, imageUrls: msgImageUrls } = extractImageLinks(text);
         const { cleanText: cleanCalendlyMsg, calendlyUrl: msgCalendlyUrl } = extractCalendlyLink(imgCleanedMsg);
         const { cleanText: cleanTextToType0, videoIds: msgVideoIds } = extractYouTubeLinks(cleanCalendlyMsg);
-        const { cleanText: cleanTextToType, ctaUrl: msgCtaUrl } = extractCTALink(cleanTextToType0);
+        const { cleanText: cleanTextToTypeR, ctaUrl: msgCtaUrl } = extractCTALink(cleanTextToType0);
+        const { cleanText: cleanTextToType, reservas: msgReservas } = extractReservaLinks(cleanTextToTypeR);
         if (isBotReply && !className.includes('typing-indicator')) {
             messageDiv.insertAdjacentHTML('beforeend', `
                 <div class="bot-actions-container" ${animate ? 'style="display:none;"' : ''}>
@@ -4223,6 +4273,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             if (msgVideoIds && msgVideoIds.length) injectYouTubeEmbed(messageDiv, msgVideoIds);
             if (msgImageUrls && msgImageUrls.length) replaceImagePlaceholders(messageDiv, msgImageUrls);
             if (msgCtaUrl) injectCheckoutDemo(messageDiv, msgCtaUrl);
+            if (msgReservas && msgReservas.length) injectReservaButtons(messageDiv, msgReservas);
         } else if (!className.includes('typing-indicator')) {
             const units = segmentsToUnits(parseMarkdownSegments(cleanTextToType));
             textSpan._mdOpen = null;
@@ -4242,6 +4293,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     if (msgCalendlyUrl) { injectCalendlyButton(messageDiv, msgCalendlyUrl); autoScroll(currentCm); }
                     if (msgVideoIds && msgVideoIds.length) { injectYouTubeEmbed(messageDiv, msgVideoIds); autoScroll(currentCm); }
                     if (msgImageUrls && msgImageUrls.length) { replaceImagePlaceholders(messageDiv, msgImageUrls); autoScroll(currentCm); }
+                    if (msgReservas && msgReservas.length) { injectReservaButtons(messageDiv, msgReservas); autoScroll(currentCm); }
                 }
             }, intervalMs);
             activeTypingIntervals.push(typing);
