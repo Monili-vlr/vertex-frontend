@@ -633,6 +633,39 @@ body {
     .mic-blink, .chip-pill, .typing-indicator .message-text, .tts-pulse { animation: none; }
     .chat-messages { scroll-behavior: auto; }
 }
+/* ===================== EFFETTI (salto del box, battito del cuore) =====================
+   Blocco isolato: si spegne dal pulsante accanto alla tagline e rispetta
+   prefers-reduced-motion. Solo transform/opacity: niente ricalcolo del layout. */
+@keyframes vtxHop {
+    0%   { transform: perspective(700px) translateY(0)     scale(1)    rotateX(0deg)   rotateY(0deg); }
+    50%  { transform: perspective(700px) translateY(-16px) scale(1.1)  rotateX(180deg) rotateY(180deg); }
+    100% { transform: perspective(700px) translateY(0)     scale(1)    rotateX(360deg) rotateY(360deg); }
+}
+.input-inner.vtx-hop { animation: vtxHop 260ms cubic-bezier(.3,.7,.4,1) 1; position: relative; z-index: 6; will-change: transform; }
+/* Durante i 260 ms il box puo' uscire di pochi pixel dai bordi: niente taglio e niente barra di scorrimento orizzontale. */
+html.vtx-hopping, html.vtx-hopping body { overflow-x: clip; }
+html.vtx-hopping .chat-main-area { overflow: visible; }
+@keyframes vtxBeat { 0% { transform: scale(1); } 30% { transform: scale(1.28); } 55% { transform: scale(.94); } 100% { transform: scale(1); } }
+.brand-heart.vtx-beat { animation: vtxBeat 520ms ease-out 1; transform-origin: 50% 60%; }
+/* Riga della tagline: testo centrato + pulsante minuscolo degli effetti. */
+.tagline-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.tagline-row .tagline-bottom { min-width: 0; }
+.fx-toggle { flex: 0 0 auto; background: transparent; border: none; padding: 0; margin: 0; width: 12px; height: 9px; line-height: 1; overflow: visible;
+    padding-top: clamp(6px, calc(1.6 * var(--u)), 10px); box-sizing: content-box; cursor: pointer; color: var(--muted); opacity: .55;
+    display: inline-flex; align-items: center; justify-content: center; transition: opacity .2s, color .2s; }
+.fx-toggle svg { width: 10px; height: 10px; fill: currentColor; flex: 0 0 auto; }
+.fx-toggle:hover { opacity: 1; color: var(--red); }
+.fx-toggle:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; border-radius: 3px; }
+.fx-toggle[aria-pressed="false"] { opacity: .3; }
+.fx-toggle[aria-pressed="false"] svg { fill: none; stroke: currentColor; stroke-width: 2; }
+@media (min-width: 601px) { .fx-toggle { padding-top: 8.5px; } }
+/* Stacco di pochi pixel tra player/volume e i quattro pulsanti; lo stesso
+   spazio si toglie sotto i pulsanti, cosi' l'altezza totale non cambia. */
+.audio-controls { margin-bottom: 8px; }
+.chat-header { margin-bottom: 6px; }
+@media (max-width: 600px) { .audio-controls { margin-bottom: 6px; } .chat-header { margin-bottom: 6px; } }
+@media (min-width: 601px) { .audio-controls { margin-bottom: 8.3px; } .chat-header { margin-bottom: 5px; } }
+@media (prefers-reduced-motion: reduce) { .input-inner.vtx-hop, .brand-heart.vtx-beat { animation: none; } }
 </style>
 </head>
 <body>
@@ -784,7 +817,10 @@ body {
             <button class="send-btn-icon" id="send-btn" onclick="handleSendMessage()">SEND</button>
         </div>
     </div>
-    <div class="tagline-bottom" id="tagline-bottom">VERTEX🧡VALÈNCIA · INFORMACIÓN VERIFICADA EN TIEMPO REAL · CONEXIÓN SEGURA</div>
+    <div class="tagline-row">
+        <div class="tagline-bottom" id="tagline-bottom">VERTEX🧡VALÈNCIA · INFORMACIÓN VERIFICADA EN TIEMPO REAL · CONEXIÓN SEGURA</div>
+        <button type="button" class="fx-toggle" id="fx-toggle" aria-pressed="true" title="Efectos: activados" aria-label="Efectos de animación" onclick="toggleVtxFx()"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 6.9L21 11l-6.6 2.1L12 20l-2.4-6.9L3 11l6.6-2.1z"/></svg></button>
+    </div>
 </div>
 </div>
 <script>
@@ -3562,10 +3598,64 @@ body {
     // L'avviso proattivo NON parte piu' a tempo: scatta dopo 3 messaggi utente
     // (vedi handleSendMessage). Cosi' "sorprende" l'utente a conversazione avviata.
 
+    // ===== EFFETTI (salto del box all'invio, battito del cuore a fine risposta) =====
+    // Isolati: se qualcosa va storto non fermano mai l'invio (try/catch ovunque).
+    function vtxFxOn() {
+        try {
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+            return safeStorage.get('vtx_fx') !== '0';
+        } catch (e) { return false; }
+    }
+    function syncVtxFxButton() {
+        try {
+            const b = document.getElementById('fx-toggle');
+            if (!b) return;
+            const on = safeStorage.get('vtx_fx') !== '0';
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            b.title = on ? 'Efectos: activados' : 'Efectos: desactivados';
+        } catch (e) {}
+    }
+    function toggleVtxFx() {
+        try {
+            const on = safeStorage.get('vtx_fx') !== '0';
+            safeStorage.set('vtx_fx', on ? '0' : '1');
+            syncVtxFxButton();
+            if (!on) vtxHop(true); // riacceso: un salto di prova
+        } catch (e) {}
+    }
+    function vtxHop(force) {
+        try {
+            if (!force && !vtxFxOn()) return;
+            const box = document.querySelector('.input-inner');
+            if (!box) return;
+            const root = document.documentElement;
+            box.classList.remove('vtx-hop');
+            void box.offsetWidth; // riparte anche con invii ravvicinati
+            root.classList.add('vtx-hopping');
+            box.classList.add('vtx-hop');
+            const done = () => { box.classList.remove('vtx-hop'); root.classList.remove('vtx-hopping'); };
+            box.addEventListener('animationend', done, { once: true });
+            setTimeout(done, 450); // rete di sicurezza se animationend non arriva
+        } catch (e) {}
+    }
+    function vtxHeartBeat() {
+        try {
+            if (!vtxFxOn()) return;
+            const h = document.querySelector('.brand-heart');
+            if (!h) return;
+            h.classList.remove('vtx-beat');
+            void h.getBoundingClientRect();
+            h.classList.add('vtx-beat');
+            setTimeout(() => h.classList.remove('vtx-beat'), 700);
+        } catch (e) {}
+    }
+    try { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', syncVtxFxButton); else syncVtxFxButton(); } catch (e) {}
+
     async function handleSendMessage() {
         if (!userInput) return;
         if (window.__botOccupato) return; // generazione in corso: il testo resta scritto
         const text = userInput.value.trim();
+        try { if (text || selectedImageDataUrl) vtxHop(); } catch (e) {}
         // Comando di test: forza il saluto proattivo ignorando ora e limiti.
         // Tollerante: con o senza "s", maiuscole/minuscole, spazi attorno.
         if (/^\/test_notifications?74689$/i.test(text.replace(/\s+/g, ''))) {
@@ -4053,6 +4143,7 @@ body {
                         clearInterval(writeInterval); activeTypingIntervals = activeTypingIntervals.filter(id => id !== writeInterval);
                         const actionsCont = typingEl.querySelector('.bot-actions-container');
                         if (actionsCont) { actionsCont.style.display = 'flex'; autoScroll(cm); }
+                        try { vtxHeartBeat(); } catch (e) {}
                         if (calendlyUrl) { injectCalendlyButton(typingEl, calendlyUrl); autoScroll(cm); }
                         if (videoIds && videoIds.length) { injectYouTubeEmbed(typingEl, videoIds); autoScroll(cm); }
                         if (ctaUrl) { injectCheckoutDemo(typingEl, ctaUrl); autoScroll(cm); }
