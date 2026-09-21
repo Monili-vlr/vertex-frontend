@@ -2244,7 +2244,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const typingIndicator = addMessageToChat(currentTypingMsg, 'bot-message typing-indicator');
         currentAbortController = new AbortController();
         try {
-            const memoriaCorta = conversationHistory.slice(-8);
+            const memoriaCorta = conversationHistory.slice(-16); // 8 scambi: prima un riassunto vedeva solo gli ultimi 4
             const response = await fetch(API_BASE + '/api/chat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null) }),
@@ -3786,7 +3786,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     return; // non chiamiamo il backend: già gestito
                 }
             }
-            let memoriaCorta = conversationHistory.slice(-8);
+            let memoriaCorta = conversationHistory.slice(-16); // 8 scambi: prima un riassunto vedeva solo gli ultimi 4
             // Doppia copertura: chiediamo al modello il marcatore invisibile, nel
             // caso il detector sopra non abbia colto una formulazione esotica.
             if (proactiveDisabled) {
