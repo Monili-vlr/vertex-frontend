@@ -495,6 +495,7 @@ body {
 }
 @supports not (aspect-ratio: 1 / 1) { .yt-embed-wrap { padding-bottom: 56.25%; height: 0; } }
 @supports (width: min(100%, 10svh)) { .yt-embed-wrap { width: min(100%, calc(42svh * 16 / 9)); } }
+.yt-embed-wrap.yt-failed { aspect-ratio: auto; background: transparent; border: none; padding: 4px 0; }
 .yt-embed-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: 0; }
 .yt-embed-wrap > div { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 /* Pulsante fullscreen "finto" (controllato da noi, aggira il blocco di Wix) */
@@ -511,14 +512,16 @@ body {
 .img-btn svg, .doc-btn svg { width: 20px; height: 20px; fill: currentColor; }
 .img-preview-bar { display: none; align-items: center; gap: 10px; padding: 8px 12px; margin: 0 4px; background: #FFFFFF; border: 1px solid var(--hairline); border-radius: 16px; }
 .img-preview-bar.visible { display: flex; }
-/* Documento attivo (PDF, Word, testo, foto di un biglietto): resta finche' non si toglie. */
-.doc-bar { display: none; align-items: center; gap: 8px; padding: 7px 12px; margin: 0 4px 6px; background: #FFFFFF; border: 1px solid var(--hairline); border-radius: 16px; font-size: 13px; color: var(--ink); }
-.doc-bar.visible { display: flex; }
-.doc-bar svg { width: 16px; height: 16px; fill: var(--red); flex: 0 0 auto; }
-.doc-bar-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-bar.loading .doc-bar-name { color: var(--muted); font-style: italic; }
-.doc-bar-remove { background: transparent; border: none; padding: 4px; cursor: pointer; display: flex; }
-.doc-bar-remove svg { fill: var(--muted); width: 14px; height: 14px; }
+/* Scheda del documento caricato: e' un messaggio della conversazione. */
+.doc-card .message-text { display: inline-flex; align-items: center; gap: 8px; }
+.doc-card-icon { font-size: 15px; }
+.doc-card-name { font-weight: 600; word-break: break-all; }
+.doc-card-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.doc-card.doc-loading .doc-card-name::after { content: ' …'; }
+.doc-card.doc-loading { opacity: .7; }
+.doc-card.doc-retirado { opacity: .5; }
+.doc-card.doc-retirado .doc-card-name { text-decoration: line-through; }
+.doc-card.doc-retirado .doc-card-remove { display: none; }
 /* Finestrella di esportazione PDF / Word */
 .export-overlay { position: fixed; inset: 0; background: rgba(20, 18, 16, 0.35); display: none; align-items: center; justify-content: center; z-index: 9000; padding: 20px; }
 .export-overlay.visible { display: flex; }
@@ -811,11 +814,6 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         <button class="chip-nav" id="chip-prev" type="button" onclick="chipPrev()"><svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg></button>
         <button class="chip-pill" id="chip-pill" type="button" onclick="chipSend()"></button>
         <button class="chip-nav" id="chip-next" type="button" onclick="chipNext()"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg></button>
-    </div>
-    <div class="doc-bar" id="doc-bar">
-        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
-        <span class="doc-bar-name" id="doc-bar-name"></span>
-        <button class="doc-bar-remove" title="Quitar documento" onclick="removeDocument()"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
     </div>
     <div class="img-preview-bar" id="img-preview-bar">
         <img class="img-preview-thumb" id="img-preview-thumb" alt="preview">
@@ -1542,6 +1540,10 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     // SPECCHIO LOCALE della conversazione corrente: se il backend non risponde
     // al ricaricamento, la chat si ridipinge comunque da qui. Aggiornato a ogni
     // messaggio (ultimi 40), legato alla sessione corrente.
+    // true se in QUESTA pagina l'utente ha gia' mandato qualcosa.
+    function utenteGiaAttivo() {
+        try { return !!document.querySelector('#chat-messages .user-message'); } catch (e) { return false; }
+    }
     function salvaSpecchioLocale() {
         try {
             safeStorage.set('chat_local_mirror', JSON.stringify({
@@ -2277,7 +2279,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             const memoriaCorta = conversationHistory.slice(-16); // 8 scambi: prima un riassunto vedeva solo gli ultimi 4
             const response = await fetch(API_BASE + '/api/chat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (window.__docAttivo || undefined) }),
+                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (docPerSessione() || undefined) }),
                 signal: currentAbortController.signal
             });
             if (response.status === 429) {
@@ -2337,7 +2339,10 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         try {
             const historyRes = await fetchConRitenti(`${API_BASE}/api/history?local_id=${encodeURIComponent(LOCAL_ID)}&session_id=${encodeURIComponent(currentSessionId)}&user_email=${encodeURIComponent(getIdentidad() || '')}`);
             const historyData = await historyRes.json();
-            if (historyData.history && historyData.history.length > 0) {
+            // Cronologia arrivata DOPO che l'utente ha gia' scritto (backend lento a
+            // svegliarsi): ridisegnarla duplicherebbe la conversazione in corso.
+            if (utenteGiaAttivo()) { historyRetrieved = true; if (loadingIndicator && loadingIndicator.isConnected) loadingIndicator.remove(); loadingIndicator = null; }
+            else if (historyData.history && historyData.history.length > 0) {
                 historyRetrieved = true;
                 if (loadingIndicator && loadingIndicator.isConnected) loadingIndicator.remove();
                 loadingIndicator = null;
@@ -2364,6 +2369,11 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             }
         } catch (err) {}
         // RETE DI SALVEZZA: backend muto o vuoto? Ridipingi dallo SPECCHIO LOCALE.
+        if (!historyRetrieved && utenteGiaAttivo()) { // stessa ragione: niente doppioni
+            historyRetrieved = true;
+            if (loadingIndicator && loadingIndicator.isConnected) loadingIndicator.remove();
+            loadingIndicator = null;
+        }
         if (!historyRetrieved) {
             const mirror = leggiSpecchioLocale();
             if (mirror) {
@@ -3824,7 +3834,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             }
             const response = await fetch(API_BASE + '/api/chat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (window.__docAttivo || undefined) }),
+                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (docPerSessione() || undefined) }),
                 signal: currentAbortController.signal
             });
             if (response.status === 429) {
@@ -3865,7 +3875,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             // qualcosa non funziona, offriamo un pulsante per reportare il bug.
             try {
                 const tnorm = (text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-                const problemaApp = /(no funciona|no va|no sirve|esta roto|se rompe|fallo|falla|fallando|\bbug\b|\berror\b|no carga|se cuelga|se traba|microfono|\bmicro\b|\bboton\b|pantalla|la app|la aplicacion|se cierra|crash|congelado|no responde)/.test(tnorm);
+                const problemaApp = /(no funciona|no va|no sirve|esta roto|se rompe|\bfallo\b|\bfallando\b|\bbug\b|\berror\b|no carga|se cuelga|se traba|microfono|\bmicro\b|\bboton\b|pantalla|la app|la aplicacion|se cierra|crash|congelado|no responde)/.test(tnorm);
                 const enfado = /(mierda|puta|joder|cabron|basura|inutil|asco|de mierda|no sirve para nada|estafa|merda|cazzo|schifo|shit|crap|useless)/.test(tnorm);
                 if (problemaApp || enfado) { injectBugReportButton(botMsgEl, text); }
             } catch (e) { /* non bloccare mai la chat per questo */ }
@@ -4172,7 +4182,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                             <div class="bot-action-bar" style="justify-content: space-between; gap: 8px;">
                                 <button class="action-btn resend-btn" title="Reenviar mensaje" onclick="resendMessage(this)"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                                 <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-                                <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                                <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                                 <button class="action-btn edit-btn" title="Editar y regenerar" onclick="toggleEditBox(this)"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
                             </div>
                             <div class="edit-box">
@@ -4249,6 +4259,19 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const textSpan = document.createElement('span'); textSpan.className = 'message-text';
         if (className.includes('typing-indicator')) textSpan.innerText = currentTypingMsg;
         wrapperDiv.appendChild(textSpan); messageDiv.appendChild(wrapperDiv);
+        // Scheda di un documento caricato: "[DOC: nome]" (anche dalla cronologia).
+        const docMatch = !isBotReply && /^\[DOC:\s*([^\]]+)\]$/.exec(String(text || '').trim());
+        if (docMatch) {
+            messageDiv.classList.add('doc-card');
+            textSpan.innerHTML = '';
+            const ic = document.createElement('span'); ic.className = 'doc-card-icon'; ic.textContent = '📎';
+            const nm = document.createElement('span'); nm.className = 'doc-card-name'; nm.textContent = docMatch[1].trim();
+            const rm = document.createElement('button'); rm.className = 'doc-card-remove'; rm.title = 'Quitar documento'; rm.textContent = '✕';
+            rm.onclick = function() { removeDocument(this); };
+            textSpan.appendChild(ic); textSpan.appendChild(nm); textSpan.appendChild(rm);
+            cm.appendChild(messageDiv); autoScroll(cm);
+            return messageDiv;
+        }
         const { cleanText: imgCleanedMsg, imageUrls: msgImageUrls } = extractImageLinks(text);
         const { cleanText: cleanCalendlyMsg, calendlyUrl: msgCalendlyUrl } = extractCalendlyLink(imgCleanedMsg);
         const { cleanText: cleanTextToType0, videoIds: msgVideoIds } = extractYouTubeLinks(cleanCalendlyMsg);
@@ -4275,7 +4298,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     <div class="bot-action-bar" style="justify-content: space-between; gap: 8px;">
                         <button class="action-btn resend-btn" title="Reenviar mensaje" onclick="resendMessage(this)"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                         <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-                        <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                        <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                         <button class="action-btn edit-btn" title="Editar y regenerar" onclick="toggleEditBox(this)"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
                     </div>
                     <div class="edit-box">
@@ -4327,23 +4350,26 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     }
 
     /* ===== DOCUMENTI: PDF, Word, testo o foto di un documento =====
-       Il server estrae il testo e non salva il file. Il testo resta qui
-       (window.__docAttivo) e accompagna le domande finche' non si toglie. */
-    function setDocBar(label, loading) {
-        const bar = document.getElementById('doc-bar');
-        const name = document.getElementById('doc-bar-name');
-        if (!bar || !name) return;
-        name.textContent = label || '';
-        bar.classList.toggle('loading', !!loading);
-        bar.classList.toggle('visible', !!label);
+       Il server estrae il testo, non salva il file, e mette nella cronologia la
+       scheda "[DOC: nome]" + la conferma. Il testo resta nel browser, legato
+       alla conversazione (sessionStorage), e accompagna le domande di QUELLA
+       conversazione: anche dopo un ricaricamento. */
+    const DOC_KEY = (sid) => 'doc_attivo::' + sid;
+    function docPerSessione() {
+        try {
+            const raw = safeStorage.getSession(DOC_KEY(currentSessionId));
+            if (!raw) return null;
+            const d = JSON.parse(raw);
+            return d && d.texto ? { nombre: d.nombre, texto: d.texto } : null;
+        } catch (e) { return null; }
     }
     window.requestDocUpload = function() {
         const inp = document.getElementById('doc-file-input');
         if (inp) inp.click();
     };
-    window.removeDocument = function() {
-        window.__docAttivo = null;
-        setDocBar('', false);
+    window.removeDocument = function(btn) {
+        try { safeStorage.setSession(DOC_KEY(currentSessionId), ''); } catch (e) {}
+        document.querySelectorAll('.doc-card').forEach(c => c.classList.add('doc-retirado'));
     };
     window.handleDocSelected = function(input) {
         const file = input.files && input.files[0];
@@ -4353,26 +4379,34 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             addMessageToChat('El archivo es demasiado grande (máx. 7 MB).', 'bot-message', false, false);
             return;
         }
-        setDocBar('Leyendo ' + file.name + '…', true);
+        // La scheda entra subito nella conversazione, in stato "leyendo".
+        const card = addMessageToChat('[DOC: ' + file.name.replace(/[\[\]]/g, '') + ']', 'user-message', false, false);
+        if (card) card.classList.add('doc-loading');
         const reader = new FileReader();
         reader.onload = async function(e) {
             try {
                 const res = await fetch(API_BASE + '/api/document', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nombre: file.name, archivo: e.target.result })
+                    body: JSON.stringify({ nombre: file.name, archivo: e.target.result, session_id: currentSessionId, user_email: getIdentidad(), language: activeLanguageCode, local_id: LOCAL_ID })
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || !data.texto) throw new Error((data.error && data.error.message) || 'No he podido leer el documento.');
-                window.__docAttivo = { nombre: data.nombre || file.name, texto: data.texto };
-                setDocBar(data.nombre || file.name, false);
+                const nombre = (data.nombre || file.name).replace(/[\[\]]/g, '');
+                try { safeStorage.setSession(DOC_KEY(currentSessionId), JSON.stringify({ nombre, texto: data.texto })); } catch (err) {}
+                document.querySelectorAll('.doc-card').forEach(c => c.classList.remove('doc-retirado'));
+                if (card) card.classList.remove('doc-loading');
+                const conferma = data.confirmacion || ('He analizado el documento «' + nombre + '». Estoy listo: pregúntame lo que quieras saber.');
+                conversationHistory.push({ role: 'user', content: '[DOC: ' + nombre + ']' });
+                conversationHistory.push({ role: 'assistant', content: conferma });
+                try { salvaSpecchioLocale(); } catch (err) {}
+                addMessageToChat(conferma, 'bot-message', true, true);
                 try { const ui = document.getElementById('user-input'); if (ui) ui.focus(); } catch (err) {}
             } catch (err) {
-                window.__docAttivo = null;
-                setDocBar('', false);
+                if (card) card.remove();
                 addMessageToChat(err.message || 'No he podido leer el documento.', 'bot-message', false, false);
             }
         };
-        reader.onerror = function() { setDocBar('', false); };
+        reader.onerror = function() { if (card) card.remove(); };
         reader.readAsDataURL(file);
     };
 
@@ -4880,6 +4914,19 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             }).catch(()=>{});
         }
     }
+    function ytFallbackLink(wrap, id) {
+        try {
+            wrap.classList.add('yt-failed');
+            wrap.innerHTML = '';
+            const a = document.createElement('a');
+            a.className = 'reserva-btn';
+            a.href = 'https://www.youtube.com/watch?v=' + encodeURIComponent(id);
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.textContent = 'Ver el vídeo en YouTube';
+            wrap.appendChild(a);
+        } catch (e) {}
+    }
     function injectYouTubeEmbed(messageEl, videoIds) {
         if (!messageEl || !videoIds || !videoIds.length) return;
         loadYouTubeAPI();
@@ -4935,11 +4982,29 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                             // 1 = playing, 0 = ended, 2 = paused
                             if (e.data === 1) onVideoPlay();
                             else if (e.data === 0 || e.data === 2) onVideoEndOrPause();
-                        }
+                        },
+                        // Video rifiutato da YouTube (non incorporabile, rimosso, privato):
+                        // al posto del riquadro nero, il link per vederlo su YouTube.
+                        onError: () => { ytFallbackLink(wrap, id); }
                     }
                 });
             };
             if (ytApiReady) build(); else ytPendingEmbeds.push(build);
+            // Rete di sicurezza: se lo script di YouTube non arriva (rete lenta,
+            // blocco dei contenuti), dopo 6 s si usa il lettore incorporato semplice.
+            setTimeout(() => {
+                if (ytApiReady || !wrap.isConnected || wrap._ytPlayer) return;
+                const i = ytPendingEmbeds.indexOf(build);
+                if (i >= 0) ytPendingEmbeds.splice(i, 1);
+                const holder = document.getElementById(playerId);
+                if (!holder) return;
+                const f = document.createElement('iframe');
+                f.src = 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id) + '?rel=0&playsinline=1';
+                f.title = 'YouTube';
+                f.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture';
+                f.setAttribute('allowfullscreen', '');
+                holder.replaceWith(f);
+            }, 6000);
         });
     }
 
