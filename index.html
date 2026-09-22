@@ -3870,10 +3870,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             // Se l'utente segnala un problema dell'app o si frustra/insulta perche'
             // qualcosa non funziona, offriamo un pulsante per reportare il bug.
             try {
-                const tnorm = (text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-                const problemaApp = /(no funciona|no va|no sirve|esta roto|se rompe|\bfallo\b|\bfallando\b|\bbug\b|\berror\b|no carga|se cuelga|se traba|microfono|\bmicro\b|\bboton\b|pantalla|la app|la aplicacion|se cierra|crash|congelado|no responde)/.test(tnorm);
-                const enfado = /(mierda|puta|joder|cabron|basura|inutil|asco|de mierda|no sirve para nada|estafa|merda|cazzo|schifo|shit|crap|useless)/.test(tnorm);
-                if (problemaApp || enfado) { injectBugReportButton(botMsgEl, text); }
+                if (rilevaSegnalazione(text)) { injectBugReportButton(botMsgEl, text); }
             } catch (e) { /* non bloccare mai la chat per questo */ }
         } catch (error) {
             conversationHistory.pop();
@@ -4040,6 +4037,24 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     }
 
     // ---- REPORT BUG: pulsante che appare quando l'utente segnala un problema ----
+    // Riconosce se l'utente segnala un guasto dell'app o si arrabbia perche'
+    // qualcosa non funziona. Solo PAROLE INTERE: prima "asco" scattava dentro
+    // "trascorrere", "puta" dentro "computa", "no va" dentro "sono validi",
+    // "falla" dentro "Fallas". Qualunque parola nuova va aggiunta qui.
+    const SEGNALAZIONE_GUASTO = ['no funciona', 'no va', 'no sirve', 'esta roto', 'se rompe', 'fallo', 'fallando', 'bug', 'error',
+        'no carga', 'se cuelga', 'se traba', 'microfono', 'micro', 'boton', 'pantalla', 'la app', 'la aplicacion', 'se cierra',
+        'crash', 'congelado', 'no responde', 'non funziona', 'non va', 'non carica', 'si blocca', 'bloccato', 'errore',
+        'not working', 'does not work', 'doesnt work', 'broken'];
+    const SEGNALAZIONE_ENFADO = ['mierda', 'puta', 'joder', 'cabron', 'basura', 'inutil', 'asco', 'estafa', 'merda', 'cazzo',
+        'schifo', 'inutile', 'shit', 'crap', 'useless'];
+    const SEGNALAZIONE_RE = new RegExp('(?:^|[^a-z0-9])(?:' + SEGNALAZIONE_GUASTO.concat(SEGNALAZIONE_ENFADO)
+        .map(w => w.replace(/ /g, '\\s+')).join('|') + ')(?![a-z0-9])');
+    function rilevaSegnalazione(text) {
+        const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return SEGNALAZIONE_RE.test(t);
+    }
+    window.rilevaSegnalazione = rilevaSegnalazione;
+
     function injectBugReportButton(messageEl, userText) {
         if (!messageEl) return;
         if (messageEl.querySelector('.bugreport-wrap')) return;
