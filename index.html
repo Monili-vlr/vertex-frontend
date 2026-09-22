@@ -506,11 +506,27 @@ body {
 .yt-embed-wrap.yt-expanded > div { position: relative; width: 100%; height: 100%; }
 
 /* ===== COMPUTER VISION: bottone immagine + anteprima ===== */
-.img-btn { background-color: transparent; border: none; color: var(--red); width: 34px; height: 34px; border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .2s; flex-shrink: 0; margin-bottom: 2px; padding: 0; }
-.img-btn:hover { background: #FBEEEB; }
-.img-btn svg { width: 20px; height: 20px; fill: currentColor; }
+.img-btn, .doc-btn { background-color: transparent; border: none; color: var(--red); width: 34px; height: 34px; border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .2s; flex-shrink: 0; margin-bottom: 2px; padding: 0; }
+.img-btn:hover, .doc-btn:hover { background: #FBEEEB; }
+.img-btn svg, .doc-btn svg { width: 20px; height: 20px; fill: currentColor; }
 .img-preview-bar { display: none; align-items: center; gap: 10px; padding: 8px 12px; margin: 0 4px; background: #FFFFFF; border: 1px solid var(--hairline); border-radius: 16px; }
 .img-preview-bar.visible { display: flex; }
+/* Documento attivo (PDF, Word, testo, foto di un biglietto): resta finche' non si toglie. */
+.doc-bar { display: none; align-items: center; gap: 8px; padding: 7px 12px; margin: 0 4px 6px; background: #FFFFFF; border: 1px solid var(--hairline); border-radius: 16px; font-size: 13px; color: var(--ink); }
+.doc-bar.visible { display: flex; }
+.doc-bar svg { width: 16px; height: 16px; fill: var(--red); flex: 0 0 auto; }
+.doc-bar-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-bar.loading .doc-bar-name { color: var(--muted); font-style: italic; }
+.doc-bar-remove { background: transparent; border: none; padding: 4px; cursor: pointer; display: flex; }
+.doc-bar-remove svg { fill: var(--muted); width: 14px; height: 14px; }
+/* Finestrella di esportazione PDF / Word */
+.export-overlay { position: fixed; inset: 0; background: rgba(20, 18, 16, 0.35); display: none; align-items: center; justify-content: center; z-index: 9000; padding: 20px; }
+.export-overlay.visible { display: flex; }
+.export-box { background: #FFFFFF; border-radius: 18px; padding: 20px; width: min(320px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.18); font-family: var(--font); }
+.export-box h4 { margin: 0 0 14px; font-family: var(--font-caps); font-size: 12px; letter-spacing: calc(.14em * var(--tr)); text-transform: uppercase; color: var(--ink); }
+.export-box .export-opt { display: block; width: 100%; margin: 0 0 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--hairline); background: #FFFFFF; font-size: 14px; cursor: pointer; text-align: left; color: var(--ink); }
+.export-box .export-opt:hover { border-color: var(--red); }
+.export-box .export-cancel { display: block; margin: 6px auto 0; background: transparent; border: none; color: var(--muted); font-size: 12px; cursor: pointer; }
 .img-preview-thumb { width: 42px; height: 42px; object-fit: cover; border-radius: 10px; border: 1px solid var(--hairline); flex-shrink: 0; }
 .img-preview-name { flex-grow: 1; font-size: 12px; color: var(--muted); font-family: var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .img-preview-remove { background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 4px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
@@ -626,8 +642,8 @@ body {
        (il campo di testo resta a 42px: e' il JavaScript a fissarlo) */
     .chat-input-wrapper { padding: 9.5px 0 1.9px; }
     .input-inner { padding: 6.5px 11.4px; gap: 9.5px; }
-    .mic-btn, .img-btn { width: 32.3px; height: 32.3px; }
-    .mic-btn svg, .img-btn svg { width: 19px; height: 19px; }
+    .mic-btn, .img-btn, .doc-btn { width: 32.3px; height: 32.3px; }
+    .mic-btn svg, .img-btn svg, .doc-btn svg { width: 19px; height: 19px; }
     .send-btn-icon, .stop-btn-icon { width: 34.2px; height: 34.2px; }
     .send-btn-icon { background-size: 17.1px 17.1px; }
     .stop-btn-icon { background-size: 15.2px 15.2px; }
@@ -796,6 +812,11 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         <button class="chip-pill" id="chip-pill" type="button" onclick="chipSend()"></button>
         <button class="chip-nav" id="chip-next" type="button" onclick="chipNext()"><svg viewBox="0 0 24 24"><path d="M8.59 16.59L10 18l6-6-6-6-1.41 1.41L13.17 12z"/></svg></button>
     </div>
+    <div class="doc-bar" id="doc-bar">
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+        <span class="doc-bar-name" id="doc-bar-name"></span>
+        <button class="doc-bar-remove" title="Quitar documento" onclick="removeDocument()"><svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+    </div>
     <div class="img-preview-bar" id="img-preview-bar">
         <img class="img-preview-thumb" id="img-preview-thumb" alt="preview">
         <span class="img-preview-name" id="img-preview-name"></span>
@@ -812,6 +833,10 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                 <svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
             </button>
             <input type="file" id="img-file-input" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif" style="display:none;" onchange="handleImageSelected(this)">
+            <button class="icon-btn doc-btn" id="doc-btn" title="Subir documento" onclick="requestDocUpload()">
+                <svg viewBox="0 0 24 24"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 0 1 5 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1V6H10v9.5a2.5 2.5 0 0 0 5 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z"/></svg>
+            </button>
+            <input type="file" id="doc-file-input" accept=".pdf,.docx,.txt,.md,.csv,.json,.ics,application/pdf,image/png,image/jpeg,image/webp" style="display:none;" onchange="handleDocSelected(this)">
             <textarea id="user-input" class="chat-input" placeholder="ESCRIBE AQUÍ..." rows="1"
                 onkeypress="handleKeyPress(event)"
                 autocomplete="on" autocorrect="on" autocapitalize="sentences" spellcheck="true"></textarea>
@@ -2252,7 +2277,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             const memoriaCorta = conversationHistory.slice(-16); // 8 scambi: prima un riassunto vedeva solo gli ultimi 4
             const response = await fetch(API_BASE + '/api/chat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null) }),
+                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (window.__docAttivo || undefined) }),
                 signal: currentAbortController.signal
             });
             if (response.status === 429) {
@@ -3799,7 +3824,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             }
             const response = await fetch(API_BASE + '/api/chat', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null) }),
+                body: JSON.stringify({ local_id: LOCAL_ID, language: activeLanguageCode, messages: memoriaCorta, session_id: currentSessionId, user_email: getIdentidad(), client_hour: (new Date().getHours()*60 + new Date().getMinutes()), access_password: getAccessPassword(), ubicacion: (window.ubicacionUsuario || null), documento: (window.__docAttivo || undefined) }),
                 signal: currentAbortController.signal
             });
             if (response.status === 429) {
@@ -4133,7 +4158,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                                 <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
                                 <button class="action-btn like-btn" title="Me gusta" onclick="toggleFeedback(this, 'like')"><svg viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></button>
                                 <button class="action-btn dislike-btn" title="No me gusta" onclick="toggleFeedback(this, 'dislike')"><svg viewBox="0 0 24 24"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg></button>
-                                <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                                <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                             </div>
                             <div class="feedback-box">
                                 <textarea class="feedback-input" placeholder="Deja tu feedback..."></textarea>
@@ -4147,7 +4172,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                             <div class="bot-action-bar" style="justify-content: space-between; gap: 8px;">
                                 <button class="action-btn resend-btn" title="Reenviar mensaje" onclick="resendMessage(this)"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                                 <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-                                <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                                <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                                 <button class="action-btn edit-btn" title="Editar y regenerar" onclick="toggleEditBox(this)"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
                             </div>
                             <div class="edit-box">
@@ -4236,7 +4261,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                         <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
                         <button class="action-btn like-btn" title="Me gusta" onclick="toggleFeedback(this, 'like')"><svg viewBox="0 0 24 24"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg></button>
                         <button class="action-btn dislike-btn" title="No me gusta" onclick="toggleFeedback(this, 'dislike')"><svg viewBox="0 0 24 24"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg></button>
-                        <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                        <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                     </div>
                     <div class="feedback-box">
                         <textarea class="feedback-input" placeholder="Deja tu feedback..."></textarea>
@@ -4250,7 +4275,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     <div class="bot-action-bar" style="justify-content: space-between; gap: 8px;">
                         <button class="action-btn resend-btn" title="Reenviar mensaje" onclick="resendMessage(this)"><svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg></button>
                         <button class="action-btn copy-btn" title="Copiar" onclick="copyText(this)"><svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg></button>
-                        <button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
+                        <button class="action-btn download-btn" title="Descargar" onclick="openExportDialog(this)"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg></button><button class="action-btn speak-btn" title="Escuchar" onclick="speakText(this)"><svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
                         <button class="action-btn edit-btn" title="Editar y regenerar" onclick="toggleEditBox(this)"><svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>
                     </div>
                     <div class="edit-box">
@@ -4299,6 +4324,106 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             activeTypingIntervals.push(typing);
         }
         return messageDiv;
+    }
+
+    /* ===== DOCUMENTI: PDF, Word, testo o foto di un documento =====
+       Il server estrae il testo e non salva il file. Il testo resta qui
+       (window.__docAttivo) e accompagna le domande finche' non si toglie. */
+    function setDocBar(label, loading) {
+        const bar = document.getElementById('doc-bar');
+        const name = document.getElementById('doc-bar-name');
+        if (!bar || !name) return;
+        name.textContent = label || '';
+        bar.classList.toggle('loading', !!loading);
+        bar.classList.toggle('visible', !!label);
+    }
+    window.requestDocUpload = function() {
+        const inp = document.getElementById('doc-file-input');
+        if (inp) inp.click();
+    };
+    window.removeDocument = function() {
+        window.__docAttivo = null;
+        setDocBar('', false);
+    };
+    window.handleDocSelected = function(input) {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        if (file.size > 7 * 1024 * 1024) {
+            addMessageToChat('El archivo es demasiado grande (máx. 7 MB).', 'bot-message', false, false);
+            return;
+        }
+        setDocBar('Leyendo ' + file.name + '…', true);
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+            try {
+                const res = await fetch(API_BASE + '/api/document', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nombre: file.name, archivo: e.target.result })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || !data.texto) throw new Error((data.error && data.error.message) || 'No he podido leer el documento.');
+                window.__docAttivo = { nombre: data.nombre || file.name, texto: data.texto };
+                setDocBar(data.nombre || file.name, false);
+                try { const ui = document.getElementById('user-input'); if (ui) ui.focus(); } catch (err) {}
+            } catch (err) {
+                window.__docAttivo = null;
+                setDocBar('', false);
+                addMessageToChat(err.message || 'No he podido leer el documento.', 'bot-message', false, false);
+            }
+        };
+        reader.onerror = function() { setDocBar('', false); };
+        reader.readAsDataURL(file);
+    };
+
+    /* ===== ESPORTAZIONE: la risposta in PDF o Word, creata dal server ===== */
+    let exportText = '';
+    function ensureExportDialog() {
+        let ov = document.getElementById('export-overlay');
+        if (ov) return ov;
+        ov = document.createElement('div');
+        ov.id = 'export-overlay';
+        ov.className = 'export-overlay';
+        ov.innerHTML = '<div class="export-box" role="dialog" aria-modal="true"><h4>Descargar como</h4>'
+            + '<button class="export-opt" data-f="pdf">PDF</button>'
+            + '<button class="export-opt" data-f="docx">Word (.docx)</button>'
+            + '<button class="export-cancel">Cancelar</button></div>';
+        ov.addEventListener('click', (e) => {
+            if (e.target === ov || e.target.classList.contains('export-cancel')) { ov.classList.remove('visible'); return; }
+            const f = e.target.getAttribute && e.target.getAttribute('data-f');
+            if (f) { ov.classList.remove('visible'); downloadExport(f); }
+        });
+        document.body.appendChild(ov);
+        return ov;
+    }
+    window.openExportDialog = function(btn) {
+        const msg = btn.closest('.message');
+        const textEl = msg && msg.querySelector('.message-text');
+        exportText = textEl ? textEl.innerText.trim() : '';
+        if (!exportText) return;
+        ensureExportDialog().classList.add('visible');
+    };
+    async function downloadExport(formato) {
+        try {
+            const d = new Date();
+            const titulo = 'Vertex València · ' + d.toLocaleDateString();
+            const res = await fetch(API_BASE + '/api/export', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ formato, titulo, texto: exportText })
+            });
+            if (!res.ok) throw new Error('export');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'vertex-valencia-' + d.toISOString().slice(0, 10) + '.' + formato;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 4000);
+        } catch (e) {
+            addMessageToChat('No he podido crear el documento ahora.', 'bot-message', false, false);
+        }
     }
 
     /* ===== COMPUTER VISION: selezione immagine, anteprima, invio a /api/vision =====
