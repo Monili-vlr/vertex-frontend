@@ -522,6 +522,15 @@ body {
 .doc-card.doc-retirado { opacity: .5; }
 .doc-card.doc-retirado .doc-card-name { text-decoration: line-through; }
 .doc-card.doc-retirado .doc-card-remove { display: none; }
+.doc-status .message-content-wrapper { min-width: 0; max-width: 100%; }
+/* Vista 360° (Street View): proposta e panorama interattivo, stesse misure dei video */
+.sv-card { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
+.sv-label { font-weight: 600; }
+.sv-note { font-size: 13px; color: var(--muted); }
+.sv-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.sv-pano { width: 100%; aspect-ratio: 16 / 9; height: auto; max-height: 42vh; max-width: min(100%, calc(42vh * 16 / 9)); flex-basis: auto; border-radius: 14px; overflow: hidden; background: #E7E3DB; touch-action: none; }
+.sv-card a.reserva-btn { align-self: flex-start; }
+.doc-status .message-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 /* Finestrella di esportazione PDF / Word */
 .export-overlay { position: fixed; inset: 0; background: rgba(20, 18, 16, 0.35); display: none; align-items: center; justify-content: center; z-index: 9000; padding: 20px; }
 .export-overlay.visible { display: flex; }
@@ -1414,6 +1423,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     // Permette al selettore lingua di attendere il flag SOLO se l'utente clicca
     // prima che sia arrivato (caso limite del clic ultra-rapido in cold start).
     let gdprFlagReady = null;
+    // Chiave del browser per la vista 360° (Maps JavaScript API), da /api/init.
+    let streetViewKey = null;
 
     // Legge dal backend se il GDPR e' attivo per questo cliente.
     async function fetchGdprFlag() {
@@ -1421,6 +1432,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             const r = await fetch(`${API_BASE}/api/init?local_id=${encodeURIComponent(LOCAL_ID)}&lang=${encodeURIComponent(activeLanguageCode)}`);
             const d = await r.json();
             if (d && d.gdpr_enabled === false) gdprEnabled = false;
+            if (d && typeof d.streetview_key === 'string' && d.streetview_key) streetViewKey = d.streetview_key;
             if (d && d.login_google === false) {
                 loginGoogleAttivo = false;
                 const btn = document.getElementById('gdpr-google-btn');
@@ -3700,6 +3712,16 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             dispararProactivo(true);
             return;
         }
+        // Risposta a una proposta di vista 360° aperta: il "si'" la apre subito
+        // (niente giro dal server), il "no" la chiude e prosegue al bot.
+        try {
+            const svEsito = text ? streetViewReplyHandled(text) : false;
+            if (svEsito === 'si') {
+                userInput.value = '';
+                addMessageToChat(text, 'user-message', false, false);
+                return;
+            }
+        } catch (e) { /* mai bloccare l'invio */ }
         // ABBOZZO — identità di memoria per STANZA. Comando di prova: "/stanza 412".
         // In produzione la stanza arriverà dal login dell'hotel via postMessage,
         // non da un comando: questo serve solo per testare la persistenza domani.
@@ -3932,14 +3954,26 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             return RESERVA_DOMINI.some(d => h === d || h.endsWith('.' + d));
         } catch (e) { return false; }
     }
+    // [STREETVIEW: pano | lat,lng | direzione | distanza | etichetta] -> proposta 360°
+    const STREETVIEW_REGEX = /\[STREETVIEW:\s*([^\]]+)\]/gi;
+    function parseStreetView(body) {
+        const p = String(body || '').split('|').map(x => x.trim());
+        if (p.length < 5 || !/^[A-Za-z0-9_-]{5,}$/.test(p[0])) return null;
+        const ll = p[1].split(',').map(Number);
+        if (ll.length !== 2 || !ll.every(Number.isFinite)) return null;
+        const heading = p[2] === '' ? null : Number(p[2]);
+        return { pano: p[0], lat: ll[0], lng: ll[1], heading: Number.isFinite(heading) ? heading : null, distance: Number(p[3]) || 0, label: p.slice(4).join(' ').slice(0, 120) };
+    }
     function extractReservaLinks(text) {
         const reservas = [];
+        let streetView = null;
+        text = String(text || '').replace(STREETVIEW_REGEX, (m, body) => { if (!streetView) streetView = parseStreetView(body); return ''; });
         const cleanText = String(text || '').replace(RESERVA_REGEX, (m, url, label) => {
             url = (url || '').trim();
             if (reservaUrlOk(url) && reservas.length < 3) reservas.push({ url, label: (label || '').trim().slice(0, 60) });
             return '';
         }).replace(/\n{3,}/g, '\n\n').trim();
-        return { cleanText, reservas };
+        return { cleanText, reservas, streetView };
     }
     function injectReservaButtons(messageEl, reservas) {
         if (!messageEl || !reservas || !reservas.length) return;
@@ -3959,6 +3993,197 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         });
         wrapper.appendChild(row);
     }
+
+    // ---- VISTA 360° (Street View) --------------------------------------------
+    // Mai automatica: prima la proposta con due pulsanti, il panorama
+    // interattivo (Maps JavaScript API, controlli nativi) solo dopo il si'.
+    // Stato per sessione: un luogo gia' proposto non si ripropone; rifiutato,
+    // non si ripropone; accettato, si apre una volta sola.
+    const SV_TXT = {
+        "es-ES": {"ask":"¿Quieres ver también la vista 360°?","yes":"SÍ, MUÉSTRALA","no":"NO","open":"Abrir en Google Maps","near":"Panorama cercano, a {D} m","fail":"La vista 360° no se puede cargar ahora."},
+        "ca-ES": {"ask":"Vols veure també la vista 360°?","yes":"SÍ, MOSTRA-LA","no":"NO","open":"Obre a Google Maps","near":"Panorama proper, a {D} m","fail":"La vista 360° no es pot carregar ara."},
+        "it-IT": {"ask":"Vuoi vedere anche la vista 360°?","yes":"SÌ, MOSTRAMELA","no":"NO","open":"Apri in Google Maps","near":"Panorama vicino, a {D} m","fail":"La vista 360° non si può caricare ora."},
+        "en-US": {"ask":"Do you want to see the 360° view too?","yes":"YES, SHOW ME","no":"NO","open":"Open in Google Maps","near":"Nearby panorama, {D} m away","fail":"The 360° view can’t be loaded right now."},
+        "fr-FR": {"ask":"Voulez-vous aussi voir la vue 360° ?","yes":"OUI, MONTREZ-LA","no":"NON","open":"Ouvrir dans Google Maps","near":"Panorama proche, à {D} m","fail":"La vue 360° ne peut pas être chargée maintenant."},
+        "pt-PT": {"ask":"Quer ver também a vista 360°?","yes":"SIM, MOSTRE","no":"NÃO","open":"Abrir no Google Maps","near":"Panorama próximo, a {D} m","fail":"A vista 360° não pode ser carregada agora."},
+        "de-DE": {"ask":"Möchten Sie auch die 360°-Ansicht sehen?","yes":"JA, ZEIGEN","no":"NEIN","open":"In Google Maps öffnen","near":"Panorama in der Nähe, {D} m","fail":"Die 360°-Ansicht kann jetzt nicht geladen werden."},
+        "nl-NL": {"ask":"Wilt u ook de 360°-weergave zien?","yes":"JA, TOON HET","no":"NEE","open":"Openen in Google Maps","near":"Panorama dichtbij, op {D} m","fail":"De 360°-weergave kan nu niet worden geladen."},
+        "gl-ES": {"ask":"Queres ver tamén a vista 360°?","yes":"SI, MÓSTRAEA","no":"NON","open":"Abrir en Google Maps","near":"Panorama próximo, a {D} m","fail":"A vista 360° non se pode cargar agora."},
+        "eu-ES": {"ask":"360° ikuspegia ere ikusi nahi duzu?","yes":"BAI, ERAKUTSI","no":"EZ","open":"Ireki Google Maps-en","near":"Gertuko panorama, {D} m-ra","fail":"360° ikuspegia ezin da orain kargatu."},
+        "sv-SE": {"ask":"Vill du också se 360°-vyn?","yes":"JA, VISA DEN","no":"NEJ","open":"Öppna i Google Maps","near":"Närliggande panorama, {D} m","fail":"360°-vyn kan inte laddas nu."},
+        "no-NO": {"ask":"Vil du også se 360°-visningen?","yes":"JA, VIS DEN","no":"NEI","open":"Åpne i Google Maps","near":"Panorama i nærheten, {D} m","fail":"360°-visningen kan ikke lastes nå."},
+        "da-DK": {"ask":"Vil du også se 360°-visningen?","yes":"JA, VIS DEN","no":"NEJ","open":"Åbn i Google Maps","near":"Panorama i nærheden, {D} m","fail":"360°-visningen kan ikke indlæses nu."},
+        "fi-FI": {"ask":"Haluatko katsoa myös 360°-näkymän?","yes":"KYLLÄ, NÄYTÄ","no":"EI","open":"Avaa Google Mapsissa","near":"Lähinäköala, {D} m","fail":"360°-näkymää ei voi ladata nyt."},
+        "is-IS": {"ask":"Viltu líka sjá 360° útsýnið?","yes":"JÁ, SÝNDU ÞAÐ","no":"NEI","open":"Opna í Google Maps","near":"Nálægt víðmynd, {D} m","fail":"Ekki er hægt að hlaða 360° útsýninu núna."},
+        "pl-PL": {"ask":"Czy chcesz też zobaczyć widok 360°?","yes":"TAK, POKAŻ","no":"NIE","open":"Otwórz w Google Maps","near":"Panorama w pobliżu, {D} m","fail":"Nie można teraz załadować widoku 360°."},
+        "cs-CZ": {"ask":"Chcete také zobrazit pohled 360°?","yes":"ANO, UKÁZAT","no":"NE","open":"Otevřít v Google Maps","near":"Panorama poblíž, {D} m","fail":"Pohled 360° teď nelze načíst."},
+        "sk-SK": {"ask":"Chcete si pozrieť aj zobrazenie 360°?","yes":"ÁNO, UKÁZAŤ","no":"NIE","open":"Otvoriť v Google Maps","near":"Panoráma v okolí, {D} m","fail":"Zobrazenie 360° sa teraz nedá načítať."},
+        "hu-HU": {"ask":"Szeretné a 360°-os nézetet is látni?","yes":"IGEN, MUTASD","no":"NEM","open":"Megnyitás a Google Mapsben","near":"Közeli panoráma, {D} m","fail":"A 360°-os nézet most nem tölthető be."},
+        "ro-RO": {"ask":"Doriți să vedeți și vizualizarea 360°?","yes":"DA, ARATĂ","no":"NU","open":"Deschide în Google Maps","near":"Panoramă apropiată, la {D} m","fail":"Vizualizarea 360° nu se poate încărca acum."},
+        "bg-BG": {"ask":"Искате ли да видите и изгледа 360°?","yes":"ДА, ПОКАЖИ","no":"НЕ","open":"Отвори в Google Maps","near":"Близка панорама, на {D} m","fail":"Изгледът 360° не може да се зареди сега."},
+        "hr-HR": {"ask":"Želite li vidjeti i prikaz 360°?","yes":"DA, PRIKAŽI","no":"NE","open":"Otvori u Google Maps","near":"Obližnja panorama, {D} m","fail":"Prikaz 360° trenutačno se ne može učitati."},
+        "sr-RS": {"ask":"Желите ли да видите и приказ 360°?","yes":"ДА, ПРИКАЖИ","no":"НЕ","open":"Отвори у Google Maps","near":"Оближња панорама, {D} m","fail":"Приказ 360° тренутно не може да се учита."},
+        "bs-BA": {"ask":"Želite li vidjeti i prikaz 360°?","yes":"DA, PRIKAŽI","no":"NE","open":"Otvori u Google Maps","near":"Obližnja panorama, {D} m","fail":"Prikaz 360° se trenutno ne može učitati."},
+        "sr-ME": {"ask":"Želite li da vidite i prikaz 360°?","yes":"DA, PRIKAŽI","no":"NE","open":"Otvori u Google Maps","near":"Obližnja panorama, {D} m","fail":"Prikaz 360° trenutno ne može da se učita."},
+        "sl-SI": {"ask":"Ali želite videti tudi pogled 360°?","yes":"DA, PRIKAŽI","no":"NE","open":"Odpri v Google Maps","near":"Bližnja panorama, {D} m","fail":"Pogleda 360° zdaj ni mogoče naložiti."},
+        "uk-UA": {"ask":"Хочете також переглянути вид 360°?","yes":"ТАК, ПОКАЖИ","no":"НІ","open":"Відкрити в Google Maps","near":"Панорама поблизу, {D} м","fail":"Вид 360° зараз не вдається завантажити."},
+        "ru-RU": {"ask":"Хотите также посмотреть вид 360°?","yes":"ДА, ПОКАЗАТЬ","no":"НЕТ","open":"Открыть в Google Maps","near":"Панорама рядом, {D} м","fail":"Вид 360° сейчас не удаётся загрузить."},
+        "be-BY": {"ask":"Хочаце таксама паглядзець від 360°?","yes":"ТАК, ПАКАЗАЦЬ","no":"НЕ","open":"Адкрыць у Google Maps","near":"Панарама побач, {D} м","fail":"Від 360° зараз не можа загрузіцца."},
+        "el-GR": {"ask":"Θέλετε να δείτε και την προβολή 360°;","yes":"ΝΑΙ, ΔΕΙΞΕ","no":"ΟΧΙ","open":"Άνοιγμα στο Google Maps","near":"Κοντινό πανόραμα, {D} μ","fail":"Η προβολή 360° δεν μπορεί να φορτωθεί τώρα."},
+        "sq-AL": {"ask":"Doni të shihni edhe pamjen 360°?","yes":"PO, SHFAQ","no":"JO","open":"Hap në Google Maps","near":"Panoramë afër, {D} m","fail":"Pamja 360° nuk mund të ngarkohet tani."},
+        "mk-MK": {"ask":"Дали сакате да го видите и приказот 360°?","yes":"ДА, ПРИКАЖИ","no":"НЕ","open":"Отвори во Google Maps","near":"Блиска панорама, {D} м","fail":"Приказот 360° не може да се вчита сега."},
+        "et-EE": {"ask":"Kas soovite näha ka 360° vaadet?","yes":"JAH, NÄITA","no":"EI","open":"Ava Google Mapsis","near":"Lähedane panoraam, {D} m","fail":"360° vaadet ei saa praegu laadida."},
+        "lv-LV": {"ask":"Vai vēlaties redzēt arī 360° skatu?","yes":"JĀ, RĀDĪT","no":"NĒ","open":"Atvērt Google Maps","near":"Tuvumā esoša panorama, {D} m","fail":"360° skatu šobrīd nevar ielādēt."},
+        "lt-LT": {"ask":"Ar norite pamatyti ir 360° vaizdą?","yes":"TAIP, RODYTI","no":"NE","open":"Atidaryti Google Maps","near":"Netoliese esanti panorama, {D} m","fail":"360° vaizdo šiuo metu įkelti negalima."},
+        "mt-MT": {"ask":"Trid tara wkoll il-veduta 360°?","yes":"IVA, URINI","no":"LE","open":"Iftaħ f’Google Maps","near":"Panorama fil-qrib, {D} m","fail":"Il-veduta 360° ma tistax tittella’ bħalissa."},
+        "ga-IE": {"ask":"Ar mhaith leat an radharc 360° a fheiceáil freisin?","yes":"TÁ, TAISPEÁIN","no":"NÍL","open":"Oscail i Google Maps","near":"Léargas gar, {D} m","fail":"Ní féidir an radharc 360° a lódáil anois."},
+        "cy-GB": {"ask":"Ydych chi am weld yr olwg 360° hefyd?","yes":"YDW, DANGOS","no":"NA","open":"Agor yn Google Maps","near":"Panorama cyfagos, {D} m","fail":"Ni ellir llwytho’r olwg 360° nawr."},
+        "gd-GB": {"ask":"A bheil thu airson an sealladh 360° fhaicinn cuideachd?","yes":"THA, SEALL","no":"CHAN EIL","open":"Fosgail ann an Google Maps","near":"Panorama faisg, {D} m","fail":"Chan urrainnear an sealladh 360° a luchdadh a-nis."},
+        "lb-LU": {"ask":"Wëllt Dir och d’360°-Vue gesinn?","yes":"JO, WEISEN","no":"NEE","open":"An Google Maps opmaachen","near":"Panorama nobäi, {D} m","fail":"D’360°-Vue kann elo net geluede ginn."},
+        "af-ZA": {"ask":"Wil jy ook die 360°-uitsig sien?","yes":"JA, WYS MY","no":"NEE","open":"Maak oop in Google Maps","near":"Nabye panorama, {D} m","fail":"Die 360°-uitsig kan nie nou gelaai word nie."},
+        "am-ET": {"ask":"የ360° እይታንም ማየት ይፈልጋሉ?","yes":"አዎ፣ አሳይ","no":"አይ","open":"በGoogle Maps ክፈት","near":"በአቅራቢያ ያለ ፓኖራማ፣ {D} ሜ","fail":"የ360° እይታ አሁን ሊጫን አይችልም።"},
+        "sw-KE": {"ask":"Je, unataka kuona pia mwonekano wa 360°?","yes":"NDIYO, ONYESHA","no":"HAPANA","open":"Fungua katika Google Maps","near":"Panorama ya karibu, {D} m","fail":"Mwonekano wa 360° hauwezi kupakiwa sasa."},
+        "yo-NG": {"ask":"Ṣé o fẹ́ rí ìwò 360° pẹ̀lú?","yes":"BẸ́Ẹ̀NI, FIHÀN","no":"RÁRÁ","open":"Ṣí ní Google Maps","near":"Panorama tòsí, {D} m","fail":"A kò lè gbé ìwò 360° sókè báyìí."},
+        "ig-NG": {"ask":"Ị chọrọ ịhụkwa ihe nlele 360°?","yes":"EE, GOSI","no":"MBA","open":"Mepee na Google Maps","near":"Panorama dị nso, {D} m","fail":"Enweghị ike ibudata ihe nlele 360° ugbu a."},
+        "ha-NG": {"ask":"Kuna son ganin kallon 360° kuma?","yes":"E, NUNES","no":"A’A","open":"Buɗe a Google Maps","near":"Panorama na kusa, {D} m","fail":"Ba za a iya loda kallon 360° yanzu ba."},
+        "ar-SA": {"ask":"هل تريد رؤية عرض 360° أيضًا؟","yes":"نعم، اعرضها","no":"لا","open":"افتح في Google Maps","near":"بانوراما قريبة، على بعد {D} م","fail":"لا يمكن تحميل عرض 360° الآن."},
+        "he-IL": {"ask":"רוצה לראות גם את התצוגה 360°?","yes":"כן, הצג","no":"לא","open":"פתח ב-Google Maps","near":"פנורמה קרובה, {D} מ׳","fail":"לא ניתן לטעון את התצוגה 360° כעת."},
+        "tr-TR": {"ask":"360° görünümünü de görmek ister misiniz?","yes":"EVET, GÖSTER","no":"HAYIR","open":"Google Maps’te aç","near":"Yakındaki panorama, {D} m","fail":"360° görünümü şu anda yüklenemiyor."},
+        "fa-IR": {"ask":"آیا می‌خواهید نمای 360° را هم ببینید؟","yes":"بله، نشان بده","no":"نه","open":"در Google Maps باز کن","near":"پانورامای نزدیک، {D} متر","fail":"نمای 360° اکنون بارگذاری نمی‌شود."},
+        "ku-TR": {"ask":"Tu jî dixwazî dîmena 360° bibînî?","yes":"BELÊ, NÎŞAN BIDE","no":"NA","open":"Di Google Maps de veke","near":"Panoramaya nêz, {D} m","fail":"Dîmena 360° niha nayê barkirin."},
+        "ps-AF": {"ask":"ایا غواړئ ۳۶۰° لید هم وګورئ؟","yes":"هو، ښکاره یې کړه","no":"نه","open":"په Google Maps کې پرانیزه","near":"نږدې پانوراما، {D} م","fail":"۳۶۰° لید اوس نه شي بارول کېدای."},
+        "hi-IN": {"ask":"क्या आप 360° दृश्य भी देखना चाहते हैं?","yes":"हाँ, दिखाएँ","no":"नहीं","open":"Google Maps में खोलें","near":"पास का पैनोरमा, {D} मी","fail":"360° दृश्य अभी लोड नहीं हो सकता।"},
+        "ur-PK": {"ask":"کیا آپ 360° منظر بھی دیکھنا چاہتے ہیں؟","yes":"ہاں، دکھائیں","no":"نہیں","open":"Google Maps میں کھولیں","near":"قریبی پینوراما، {D} میٹر","fail":"360° منظر ابھی لوڈ نہیں ہو سکتا۔"},
+        "bn-BD": {"ask":"আপনি কি 360° ভিউও দেখতে চান?","yes":"হ্যাঁ, দেখান","no":"না","open":"Google Maps-এ খুলুন","near":"কাছের প্যানোরামা, {D} মি","fail":"360° ভিউ এখন লোড করা যাচ্ছে না।"},
+        "pa-IN": {"ask":"ਕੀ ਤੁਸੀਂ 360° ਦ੍ਰਿਸ਼ ਵੀ ਦੇਖਣਾ ਚਾਹੁੰਦੇ ਹੋ?","yes":"ਹਾਂ, ਦਿਖਾਓ","no":"ਨਹੀਂ","open":"Google Maps ਵਿੱਚ ਖੋਲ੍ਹੋ","near":"ਨੇੜਲਾ ਪੈਨੋਰਾਮਾ, {D} ਮੀ","fail":"360° ਦ੍ਰਿਸ਼ ਹੁਣ ਲੋਡ ਨਹੀਂ ਹੋ ਸਕਦਾ।"},
+        "gu-IN": {"ask":"શું તમે 360° દૃશ્ય પણ જોવા માંગો છો?","yes":"હા, બતાવો","no":"ના","open":"Google Maps માં ખોલો","near":"નજીકનું પેનોરમા, {D} મી","fail":"360° દૃશ્ય હવે લોડ થઈ શકતું નથી."},
+        "mr-IN": {"ask":"तुम्हाला 360° दृश्यही पाहायचे आहे का?","yes":"हो, दाखवा","no":"नाही","open":"Google Maps मध्ये उघडा","near":"जवळचे पॅनोरमा, {D} मी","fail":"360° दृश्य आता लोड होऊ शकत नाही."},
+        "ne-NP": {"ask":"तपाईं 360° दृश्य पनि हेर्न चाहनुहुन्छ?","yes":"हो, देखाउनुहोस्","no":"होइन","open":"Google Maps मा खोल्नुहोस्","near":"नजिकैको पानोरमा, {D} मि","fail":"360° दृश्य अहिले लोड गर्न सकिँदैन।"},
+        "si-LK": {"ask":"ඔබට 360° දසුන ද බැලීමට අවශ්‍යද?","yes":"ඔව්, පෙන්වන්න","no":"නැත","open":"Google Maps හි විවෘත කරන්න","near":"ආසන්න පැනෝරාමා, {D} මී","fail":"360° දසුන දැන් පූරණය කළ නොහැක."},
+        "ta-IN": {"ask":"நீங்கள் 360° காட்சியையும் பார்க்க விரும்புகிறீர்களா?","yes":"ஆம், காட்டு","no":"இல்லை","open":"Google Maps இல் திற","near":"அருகிலுள்ள பனோரமா, {D} மீ","fail":"360° காட்சியை இப்போது ஏற்ற முடியாது."},
+        "te-IN": {"ask":"మీరు 360° వీక్షణను కూడా చూడాలనుకుంటున్నారా?","yes":"అవును, చూపించు","no":"కాదు","open":"Google Mapsలో తెరవండి","near":"సమీప పనోరమా, {D} మీ","fail":"360° వీక్షణను ఇప్పుడు లోడ్ చేయలేము."},
+        "kn-IN": {"ask":"ನೀವು 360° ನೋಟವನ್ನೂ ನೋಡಲು ಬಯಸುವಿರಾ?","yes":"ಹೌದು, ತೋರಿಸಿ","no":"ಇಲ್ಲ","open":"Google Maps ನಲ್ಲಿ ತೆರೆಯಿರಿ","near":"ಹತ್ತಿರದ ಪನೋರಮಾ, {D} ಮೀ","fail":"360° ನೋಟವನ್ನು ಈಗ ಲೋಡ್ ಮಾಡಲು ಸಾಧ್ಯವಿಲ್ಲ."},
+        "ml-IN": {"ask":"നിങ്ങൾക്ക് 360° കാഴ്ചയും കാണണോ?","yes":"അതെ, കാണിക്കുക","no":"ഇല്ല","open":"Google Maps-ൽ തുറക്കുക","near":"അടുത്തുള്ള പനോരമ, {D} മീ","fail":"360° കാഴ്ച ഇപ്പോൾ ലോഡ് ചെയ്യാൻ കഴിയില്ല."},
+        "th-TH": {"ask":"คุณต้องการดูมุมมอง 360° ด้วยหรือไม่?","yes":"ใช่ แสดงเลย","no":"ไม่","open":"เปิดใน Google Maps","near":"พาโนรามาใกล้เคียง {D} ม.","fail":"ไม่สามารถโหลดมุมมอง 360° ได้ในขณะนี้"},
+        "lo-LA": {"ask":"ທ່ານຕ້ອງການເບິ່ງທັດສະນະ 360° ນຳບໍ?","yes":"ແມ່ນ, ສະແດງ","no":"ບໍ່","open":"ເປີດໃນ Google Maps","near":"ພາໂນຣາມາໃກ້ຄຽງ, {D} ມ","fail":"ບໍ່ສາມາດໂຫຼດທັດສະນະ 360° ໄດ້ຕອນນີ້"},
+        "my-MM": {"ask":"360° မြင်ကွင်းကိုလည်း ကြည့်လိုပါသလား။","yes":"ဟုတ်၊ ပြပါ","no":"မဟုတ်","open":"Google Maps တွင် ဖွင့်ပါ","near":"အနီးအနားရှိ မြင်ကွင်းကျယ်၊ {D} မီတာ","fail":"360° မြင်ကွင်းကို ယခု မတင်နိုင်ပါ။"},
+        "km-KH": {"ask":"តើអ្នកចង់មើលទិដ្ឋភាព 360° ដែរឬទេ?","yes":"បាទ/ចាស បង្ហាញ","no":"ទេ","open":"បើកក្នុង Google Maps","near":"ទិដ្ឋភាពជិតៗ ចម្ងាយ {D} ម","fail":"មិនអាចផ្ទុកទិដ្ឋភាព 360° បានទេឥឡូវនេះ។"},
+        "vi-VN": {"ask":"Bạn có muốn xem cả chế độ xem 360° không?","yes":"CÓ, HIỂN THỊ","no":"KHÔNG","open":"Mở trong Google Maps","near":"Toàn cảnh gần, cách {D} m","fail":"Không thể tải chế độ xem 360° ngay bây giờ."},
+        "id-ID": {"ask":"Apakah Anda ingin melihat tampilan 360° juga?","yes":"YA, TAMPILKAN","no":"TIDAK","open":"Buka di Google Maps","near":"Panorama terdekat, {D} m","fail":"Tampilan 360° tidak dapat dimuat sekarang."},
+        "ms-MY": {"ask":"Adakah anda mahu melihat paparan 360° juga?","yes":"YA, TUNJUK","no":"TIDAK","open":"Buka dalam Google Maps","near":"Panorama berdekatan, {D} m","fail":"Paparan 360° tidak dapat dimuatkan sekarang."},
+        "fil-PH": {"ask":"Gusto mo ring makita ang 360° view?","yes":"OO, IPAKITA","no":"HINDI","open":"Buksan sa Google Maps","near":"Malapit na panorama, {D} m","fail":"Hindi ma-load ang 360° view ngayon."},
+        "zh-CN": {"ask":"您也想查看 360° 视图吗？","yes":"是，显示","no":"否","open":"在 Google Maps 中打开","near":"附近全景，{D} 米","fail":"目前无法加载 360° 视图。"},
+        "yue-Hant-HK": {"ask":"你想唔想睇埋 360° 景觀？","yes":"係，顯示","no":"唔係","open":"喺 Google Maps 開","near":"附近全景，{D} 米","fail":"而家載入唔到 360° 景觀。"},
+        "ja-JP": {"ask":"360°ビューも表示しますか？","yes":"はい、表示","no":"いいえ","open":"Google Maps で開く","near":"近くのパノラマ、{D} m","fail":"360°ビューを今読み込めません。"},
+        "ko-KR": {"ask":"360° 보기도 볼까요?","yes":"예, 표시","no":"아니요","open":"Google Maps에서 열기","near":"주변 파노라마, {D} m","fail":"지금은 360° 보기를 로드할 수 없습니다."},
+        "mn-MN": {"ask":"Та 360° харагдацыг бас үзэх үү?","yes":"ТИЙМ, ХАРУУЛ","no":"ҮГҮЙ","open":"Google Maps дээр нээх","near":"Ойролцоох панорам, {D} м","fail":"360° харагдацыг одоо ачаалах боломжгүй."},
+        "kk-KZ": {"ask":"360° көрінісін де көргіңіз келе ме?","yes":"ИӘ, КӨРСЕТ","no":"ЖОҚ","open":"Google Maps ішінде ашу","near":"Жақын панорама, {D} м","fail":"360° көрінісін қазір жүктеу мүмкін емес."},
+        "uz-UZ": {"ask":"360° ko‘rinishini ham ko‘rmoqchimisiz?","yes":"HA, KO‘RSAT","no":"YO‘Q","open":"Google Maps’da ochish","near":"Yaqin panorama, {D} m","fail":"360° ko‘rinishini hozir yuklab bo‘lmaydi."},
+        "tk-TM": {"ask":"360° görnüşini hem görmek isleýärsiňizmi?","yes":"HAWA, GÖRKEZ","no":"ÝOK","open":"Google Maps-da aç","near":"Golaý panorama, {D} m","fail":"360° görnüşini häzir ýükläp bolmaýar."},
+        "tg-TJ": {"ask":"Оё шумо низ намуди 360°-ро дидан мехоҳед?","yes":"ҲА, НИШОН ДИҲ","no":"НЕ","open":"Дар Google Maps кушодан","near":"Панорамаи наздик, {D} м","fail":"Намуди 360° ҳозир бор карда намешавад."},
+        "ka-GE": {"ask":"გსურთ 360° ხედის ნახვაც?","yes":"დიახ, ჩვენება","no":"არა","open":"Google Maps-ში გახსნა","near":"ახლომდებარე პანორამა, {D} მ","fail":"360° ხედი ახლა ვერ ჩაიტვირთება."},
+        "hy-AM": {"ask":"Ցանկանո՞ւմ եք նաև տեսնել 360° տեսքը։","yes":"ԱՅՈ, ՑՈՒՅՑ ՏԱԼ","no":"ՈՉ","open":"Բացել Google Maps-ում","near":"Մոտակա համայնապատկեր, {D} մ","fail":"360° տեսքը հիմա չի կարող բեռնվել։"},
+        "az-AZ": {"ask":"360° görünüşünü də görmək istəyirsiniz?","yes":"BƏLİ, GÖSTƏR","no":"XEYR","open":"Google Maps-də aç","near":"Yaxınlıqdakı panorama, {D} m","fail":"360° görünüşünü indi yükləmək mümkün deyil."}
+    };
+    // 84 lingue: codice esatto, poi stessa lingua con altra regione, poi inglese.
+    function svTxt() {
+        const code = String(activeLanguageCode || '');
+        if (SV_TXT[code]) return SV_TXT[code];
+        const base = code.split('-')[0].toLowerCase();
+        const k = Object.keys(SV_TXT).find(x => x.split('-')[0].toLowerCase() === base);
+        return SV_TXT[k || 'en-US'];
+    }
+    window.__svTxt = SV_TXT;
+    const svState = { offered: new Set(), rejected: new Set(), pending: null };
+    window.__svState = svState;
+    function svKey(sv) { return sv.pano + '|' + String(sv.label || '').toLowerCase(); }
+    function svMapsUrl(sv) {
+        // Maps URLs documentati: map_action=pano con pano e viewpoint.
+        let u = 'https://www.google.com/maps/@?api=1&map_action=pano&pano=' + encodeURIComponent(sv.pano) + '&viewpoint=' + sv.lat + ',' + sv.lng;
+        if (sv.heading !== null) u += '&heading=' + Math.round(sv.heading);
+        return u;
+    }
+    let svLoader = null;
+    function loadMapsApi() {
+        if (window.google && google.maps && google.maps.importLibrary) return Promise.resolve();
+        if (svLoader) return svLoader;
+        if (!streetViewKey) return Promise.reject(new Error('sin clave'));
+        svLoader = new Promise((resolve, reject) => {
+            window.__vtxMapsReady = () => resolve();
+            const sc = document.createElement('script');
+            sc.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(streetViewKey) + '&v=weekly&loading=async&callback=__vtxMapsReady';
+            sc.async = true;
+            sc.onerror = () => { svLoader = null; reject(new Error('Maps JS non caricato')); };
+            document.head.appendChild(sc);
+        });
+        return svLoader;
+    }
+    function injectStreetViewOffer(messageEl, sv, live = true) {
+        if (!messageEl || !sv) return;
+        const key = svKey(sv);
+        if (svState.offered.has(key) || svState.rejected.has(key)) return; // gia' proposto per questo luogo
+        const wrapper = messageEl.querySelector('.message-content-wrapper');
+        if (!wrapper || wrapper.querySelector('.sv-card')) return;
+        svState.offered.add(key);
+        const t = svTxt();
+        const card = document.createElement('div');
+        card.className = 'sv-card';
+        const label = document.createElement('div'); label.className = 'sv-label'; label.textContent = sv.label;
+        card.appendChild(label);
+        if (sv.distance > 30) { const n = document.createElement('div'); n.className = 'sv-note'; n.textContent = t.near.replace('{D}', Math.round(sv.distance)); card.appendChild(n); }
+        const ask = document.createElement('div'); ask.className = 'sv-ask'; ask.textContent = t.ask; card.appendChild(ask);
+        const row = document.createElement('div'); row.className = 'sv-buttons';
+        const yes = document.createElement('button'); yes.type = 'button'; yes.className = 'reserva-btn sv-yes'; yes.textContent = t.yes;
+        const no = document.createElement('button'); no.type = 'button'; no.className = 'reserva-btn secondary sv-no'; no.textContent = t.no;
+        yes.onclick = () => acceptStreetView(card, sv);
+        no.onclick = () => rejectStreetView(card, sv);
+        row.appendChild(yes); row.appendChild(no); card.appendChild(row);
+        wrapper.appendChild(card);
+        if (live) svState.pending = { card, sv }; // dalla cronologia: scheda visibile, ma non intercetta il "si'"
+    }
+    function rejectStreetView(card, sv) {
+        svState.rejected.add(svKey(sv));
+        if (svState.pending && svState.pending.card === card) svState.pending = null;
+        const row = card.querySelector('.sv-buttons'); if (row) row.remove();
+        const ask = card.querySelector('.sv-ask'); if (ask) ask.remove();
+        const label = card.querySelector('.sv-label'); if (label) label.remove();
+        const note = card.querySelector('.sv-note'); if (note) note.remove();
+    }
+    async function acceptStreetView(card, sv) {
+        if (svState.pending && svState.pending.card === card) svState.pending = null;
+        const t = svTxt();
+        const row = card.querySelector('.sv-buttons'); if (row) row.remove();
+        const ask = card.querySelector('.sv-ask'); if (ask) ask.remove();
+        const pano = document.createElement('div'); pano.className = 'sv-pano';
+        card.insertBefore(pano, card.firstChild);
+        const link = document.createElement('a'); link.className = 'reserva-btn secondary sv-open'; link.href = svMapsUrl(sv); link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = t.open;
+        card.appendChild(link);
+        try { autoScroll(getChatMessages()); } catch (e) {}
+        try {
+            await loadMapsApi();
+            const lib = await google.maps.importLibrary('streetView');
+            const opts = { pano: sv.pano, pov: { heading: sv.heading === null ? 0 : sv.heading, pitch: 0 }, zoom: 0, motionTracking: false, motionTrackingControl: false, addressControl: false, fullscreenControl: true, linksControl: true, panControl: true, zoomControl: true };
+            card._panorama = new lib.StreetViewPanorama(pano, opts);
+        } catch (e) {
+            pano.remove();
+            const f = document.createElement('div'); f.className = 'sv-note'; f.textContent = t.fail;
+            card.insertBefore(f, link);
+        }
+    }
+    // "si'" / "no" scritti in chat mentre c'e' una proposta aperta.
+    const SV_SI = /^(s[iì]|s[ií]|yes|yeah|yep|ok|okay|vale|claro|dale|certo|certo che s[iì]|oui|ja|sim|mostramela|mu[eé]stramela|show me|fammela vedere|s[iì] grazie|s[ií] gracias|yes please)[.!]*$/i;
+    const SV_NO = /^(no|nope|non|nein|n[aã]o|no grazie|no gracias|no thanks|no, grazie|no, gracias)[.!]*$/i;
+    function streetViewReplyHandled(text) {
+        const p = svState.pending;
+        if (!p || !p.card.isConnected) return false;
+        const tx = String(text || '').trim().toLowerCase();
+        if (SV_SI.test(tx)) { acceptStreetView(p.card, p.sv); return 'si'; }
+        if (SV_NO.test(tx)) { rejectStreetView(p.card, p.sv); return 'no'; }
+        svState.pending = null; // l'utente e' passato ad altro: la proposta resta, ma non intercetta piu'
+        return false;
+    }
+    window.injectStreetViewOffer = injectStreetViewOffer;
+    window.streetViewReplyHandled = streetViewReplyHandled;
 
     // ---- DEMO CHECKOUT: estrae [CTA: url] e mostra un finto flusso di pagamento ----
     // (non si collega a nessun pagamento reale; e' solo per la demo)
@@ -4162,7 +4387,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: cleanFinal0, videoIds } = extractYouTubeLinks(cleanCalendly);
         // estrai il marcatore [CTA: url] del pedido -> diventera' un checkout demo
         const { cleanText: cleanFinalR, ctaUrl } = extractCTALink(cleanFinal0);
-        const { cleanText: cleanFinal, reservas } = extractReservaLinks(cleanFinalR);
+        const { cleanText: cleanFinal, reservas, streetView } = extractReservaLinks(cleanFinalR);
         let currentText = textSpan.innerText;
         const deleteInterval = setInterval(() => {
             if (!typingEl.isConnected) { clearInterval(deleteInterval); activeTypingIntervals = activeTypingIntervals.filter(id => id !== deleteInterval); return; }
@@ -4242,6 +4467,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                         if (videoIds && videoIds.length) { injectYouTubeEmbed(typingEl, videoIds); autoScroll(cm); }
                         if (ctaUrl) { injectCheckoutDemo(typingEl, ctaUrl); autoScroll(cm); }
                         if (reservas && reservas.length) { injectReservaButtons(typingEl, reservas); autoScroll(cm); }
+                        if (streetView) { injectStreetViewOffer(typingEl, streetView); autoScroll(cm); }
                         // fallback: SOLO se restano davvero segnaposto §§IMGn§§ non
                         // sostituiti (es. typing interrotto). Durante il typing sopra
                         // (riga §§IMG) le immagini vengono gia inserite: richiamare qui
@@ -4287,7 +4513,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: cleanCalendlyMsg, calendlyUrl: msgCalendlyUrl } = extractCalendlyLink(imgCleanedMsg);
         const { cleanText: cleanTextToType0, videoIds: msgVideoIds } = extractYouTubeLinks(cleanCalendlyMsg);
         const { cleanText: cleanTextToTypeR, ctaUrl: msgCtaUrl } = extractCTALink(cleanTextToType0);
-        const { cleanText: cleanTextToType, reservas: msgReservas } = extractReservaLinks(cleanTextToTypeR);
+        const { cleanText: cleanTextToType, reservas: msgReservas, streetView: msgStreetView } = extractReservaLinks(cleanTextToTypeR);
         if (isBotReply && !className.includes('typing-indicator')) {
             messageDiv.insertAdjacentHTML('beforeend', `
                 <div class="bot-actions-container" ${animate ? 'style="display:none;"' : ''}>
@@ -4333,6 +4559,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             if (msgImageUrls && msgImageUrls.length) replaceImagePlaceholders(messageDiv, msgImageUrls);
             if (msgCtaUrl) injectCheckoutDemo(messageDiv, msgCtaUrl);
             if (msgReservas && msgReservas.length) injectReservaButtons(messageDiv, msgReservas);
+            if (msgStreetView) injectStreetViewOffer(messageDiv, msgStreetView, false);
         } else if (!className.includes('typing-indicator')) {
             const units = segmentsToUnits(parseMarkdownSegments(cleanTextToType));
             textSpan._mdOpen = null;
@@ -4353,6 +4580,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     if (msgVideoIds && msgVideoIds.length) { injectYouTubeEmbed(messageDiv, msgVideoIds); autoScroll(currentCm); }
                     if (msgImageUrls && msgImageUrls.length) { replaceImagePlaceholders(messageDiv, msgImageUrls); autoScroll(currentCm); }
                     if (msgReservas && msgReservas.length) { injectReservaButtons(messageDiv, msgReservas); autoScroll(currentCm); }
+                    if (msgStreetView) { injectStreetViewOffer(messageDiv, msgStreetView); autoScroll(currentCm); }
                 }
             }, intervalMs);
             activeTypingIntervals.push(typing);
@@ -4382,6 +4610,119 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         try { safeStorage.setSession(DOC_KEY(currentSessionId), ''); } catch (e) {}
         document.querySelectorAll('.doc-card').forEach(c => c.classList.add('doc-retirado'));
     };
+    // Avanzamento della lettura nelle 84 lingue: frasi corte (una riga anche sul
+    // telefono, in maiuscolo e con la spaziatura dell'indicatore), il nome del
+    // file si accorcia con "…" se non entra. Alla fine la conferma del server.
+    const DOC_PASSI = {
+        "es-ES": ["Analizo «{NOMBRE}»", "Leo el contenido", "Extraigo los datos"],
+        "ca-ES": ["Analitzo «{NOMBRE}»", "Llegeixo el contingut", "Extrec les dades"],
+        "it-IT": ["Analizzo «{NOMBRE}»", "Leggo il contenuto", "Estraggo i dati"],
+        "en-US": ["Analyzing «{NOMBRE}»", "Reading the content", "Extracting the data"],
+        "fr-FR": ["J'analyse «{NOMBRE}»", "Je lis le contenu", "J'extrais les données"],
+        "pt-PT": ["Analiso «{NOMBRE}»", "Leio o conteúdo", "Extraio os dados"],
+        "de-DE": ["Ich analysiere «{NOMBRE}»", "Ich lese den Inhalt", "Ich extrahiere die Daten"],
+        "nl-NL": ["Ik analyseer «{NOMBRE}»", "Ik lees de inhoud", "Ik extraheer de gegevens"],
+        "gl-ES": ["Analizo «{NOMBRE}»", "Leo o contido", "Extraio os datos"],
+        "eu-ES": ["«{NOMBRE}» aztertzen ari naiz", "Edukia irakurtzen ari naiz", "Datuak ateratzen ari naiz"],
+        "sv-SE": ["Analyserar «{NOMBRE}»", "Läser innehållet", "Extraherar data"],
+        "no-NO": ["Analyserer «{NOMBRE}»", "Leser innholdet", "Henter ut dataene"],
+        "da-DK": ["Analyserer «{NOMBRE}»", "Læser indholdet", "Uddrager dataene"],
+        "fi-FI": ["Analysoin «{NOMBRE}»", "Luen sisältöä", "Poimin tietoja"],
+        "is-IS": ["Greini «{NOMBRE}»", "Les innihaldið", "Dreg gögnin út"],
+        "pl-PL": ["Analizuję «{NOMBRE}»", "Czytam zawartość", "Wyodrębniam dane"],
+        "cs-CZ": ["Analyzuji «{NOMBRE}»", "Čtu obsah", "Vytahuji data"],
+        "sk-SK": ["Analyzujem «{NOMBRE}»", "Čítam obsah", "Vyberám údaje"],
+        "hu-HU": ["«{NOMBRE}» elemzése", "A tartalom olvasása", "Az adatok kinyerése"],
+        "ro-RO": ["Analizez «{NOMBRE}»", "Citesc conținutul", "Extrag datele"],
+        "bg-BG": ["Анализирам «{NOMBRE}»", "Чета съдържанието", "Извличам данните"],
+        "hr-HR": ["Analiziram «{NOMBRE}»", "Čitam sadržaj", "Izvlačim podatke"],
+        "sr-RS": ["Анализирам «{NOMBRE}»", "Читам садржај", "Извлачим податке"],
+        "bs-BA": ["Analiziram «{NOMBRE}»", "Čitam sadržaj", "Izvlačim podatke"],
+        "sr-ME": ["Analiziram «{NOMBRE}»", "Čitam sadržaj", "Izvlačim podatke"],
+        "sl-SI": ["Analiziram «{NOMBRE}»", "Berem vsebino", "Pridobivam podatke"],
+        "uk-UA": ["Аналізую «{NOMBRE}»", "Читаю вміст", "Витягую дані"],
+        "ru-RU": ["Анализирую «{NOMBRE}»", "Читаю содержимое", "Извлекаю данные"],
+        "be-BY": ["Аналізую «{NOMBRE}»", "Чытаю змест", "Вымаю даныя"],
+        "el-GR": ["Αναλύω το «{NOMBRE}»", "Διαβάζω το περιεχόμενο", "Εξάγω τα δεδομένα"],
+        "sq-AL": ["Duke analizuar «{NOMBRE}»", "Duke lexuar përmbajtjen", "Duke nxjerrë të dhënat"],
+        "mk-MK": ["Анализирам «{NOMBRE}»", "Го читам содржината", "Ги извлекувам податоците"],
+        "et-EE": ["Analüüsin «{NOMBRE}»", "Loen sisu", "Eraldan andmeid"],
+        "lv-LV": ["Analizēju «{NOMBRE}»", "Lasu saturu", "Izvelku datus"],
+        "lt-LT": ["Analizuoju «{NOMBRE}»", "Skaitau turinį", "Išgaunu duomenis"],
+        "mt-MT": ["Qed nanalizza «{NOMBRE}»", "Qed naqra l-kontenut", "Qed nestrahi d-data"],
+        "ga-IE": ["Ag anailísiú «{NOMBRE}»", "Ag léamh an ábhair", "Sonraí á mbaint amach"],
+        "cy-GB": ["Yn dadansoddi «{NOMBRE}»", "Yn darllen y cynnwys", "Yn echdynnu'r data"],
+        "gd-GB": ["A' mion-sgrùdadh «{NOMBRE}»", "A' leughadh an t-susbaint", "A' tarraing an dàta"],
+        "lb-LU": ["Ech analyséieren «{NOMBRE}»", "Ech liesen den Inhalt", "Ech extrahéieren d'Daten"],
+        "af-ZA": ["Ek analiseer «{NOMBRE}»", "Ek lees die inhoud", "Ek onttrek die data"],
+        "am-ET": ["«{NOMBRE}» እየተንተራሁ ነው", "ይዘቱን እያነበብኩ ነው", "ውሂቡን እያወጣሁ ነው"],
+        "sw-KE": ["Nachanganua «{NOMBRE}»", "Nasoma maudhui", "Natoa data"],
+        "yo-NG": ["Mo n ṣe itupalẹ «{NOMBRE}»", "Mo n ka akoonu naa", "Mo n yọ data jade"],
+        "ig-NG": ["Na-enyocha «{NOMBRE}»", "Na-agụ ọdịnaya ahụ", "Na-ewepụta data ahụ"],
+        "ha-NG": ["Ina nazarin «{NOMBRE}»", "Ina karanta abin ciki", "Ina fitar da bayanan"],
+        "ar-SA": ["أُحلّل «{NOMBRE}»", "أقرأ المحتوى", "أستخرج البيانات"],
+        "he-IL": ["מנתח את «{NOMBRE}»", "קורא את התוכן", "מחלץ את הנתונים"],
+        "tr-TR": ["«{NOMBRE}» analiz ediyorum", "İçeriği okuyorum", "Verileri çıkarıyorum"],
+        "fa-IR": ["در حال تحلیل «{NOMBRE}» هستم", "محتوا را می‌خوانم", "داده‌ها را استخراج می‌کنم"],
+        "ku-TR": ["«{NOMBRE}» analîz dikim", "Naverokê dixwînim", "Daneyan derdixînim"],
+        "ps-AF": ["«{NOMBRE}» تحلیلوم", "منځپانګه لولم", "ډاټا راوباسم"],
+        "hi-IN": ["«{NOMBRE}» का विश्लेषण कर रहा हूँ", "सामग्री पढ़ रहा हूँ", "डेटा निकाल रहा हूँ"],
+        "ur-PK": ["«{NOMBRE}» کا تجزیہ کر رہا ہوں", "مواد پڑھ رہا ہوں", "ڈیٹا نکال رہا ہوں"],
+        "bn-BD": ["«{NOMBRE}» বিশ্লেষণ করছি", "বিষয়বস্তু পড়ছি", "ডেটা বের করছি"],
+        "pa-IN": ["«{NOMBRE}» ਦਾ ਵਿਸ਼ਲੇਸ਼ਣ ਕਰ ਰਿਹਾ ਹਾਂ", "ਸਮੱਗਰੀ ਪੜ੍ਹ ਰਿਹਾ ਹਾਂ", "ਡੇਟਾ ਕੱਢ ਰਿਹਾ ਹਾਂ"],
+        "gu-IN": ["«{NOMBRE}» નું વિશ્લેષણ કરી રહ્યો છું", "સામગ્રી વાંચી રહ્યો છું", "ડેટા કાઢી રહ્યો છું"],
+        "mr-IN": ["«{NOMBRE}» चे विश्लेषण करत आहे", "सामग्री वाचत आहे", "डेटा काढत आहे"],
+        "ne-NP": ["«{NOMBRE}» विश्लेषण गर्दै", "सामग्री पढ्दै", "डेटा निकाल्दै"],
+        "si-LK": ["«{NOMBRE}» විශ්ලේෂණය කරමින්", "අන්තර්ගතය කියවමින්", "දත්ත උපුටා ගනිමින්"],
+        "ta-IN": ["«{NOMBRE}» பகுப்பாய்வு செய்கிறேன்", "உள்ளடக்கத்தைப் படிக்கிறேன்", "தரவை பிரித்தெடுக்கிறேன்"],
+        "te-IN": ["«{NOMBRE}» విశ్లేషిస్తున్నాను", "కంటెంట్ చదువుతున్నాను", "డేటా సేకరిస్తున్నాను"],
+        "kn-IN": ["«{NOMBRE}» ವಿಶ್ಲೇಷಿಸುತ್ತಿದ್ದೇನೆ", "ವಿಷಯವನ್ನು ಓದುತ್ತಿದ್ದೇನೆ", "ಡೇಟಾವನ್ನು ಹೊರತೆಗೆಯುತ್ತಿದ್ದೇನೆ"],
+        "ml-IN": ["«{NOMBRE}» വിശകലനം ചെയ്യുന്നു", "ഉള്ളടക്കം വായിക്കുന്നു", "ഡാറ്റ വേർതിരിക്കുന്നു"],
+        "th-TH": ["กำลังวิเคราะห์ «{NOMBRE}»", "กำลังอ่านเนื้อหา", "กำลังดึงข้อมูล"],
+        "lo-LA": ["ກຳລັງວິເຄາະ «{NOMBRE}»", "ກຳລັງອ່ານເນື້ອໃນ", "ກຳລັງດຶງຂໍ້ມູນ"],
+        "my-MM": ["«{NOMBRE}» ကို ခွဲခြမ်းစိတ်ဖြာနေသည်", "အကြောင်းအရာကို ဖတ်နေသည်", "ဒေတာများကို ထုတ်ယူနေသည်"],
+        "km-KH": ["កំពុងវិភាគ «{NOMBRE}»", "កំពុងអានខ្លឹមសារ", "កំពុងទាញយកទិន្នន័យ"],
+        "vi-VN": ["Đang phân tích «{NOMBRE}»", "Đang đọc nội dung", "Đang trích xuất dữ liệu"],
+        "id-ID": ["Menganalisis «{NOMBRE}»", "Membaca isinya", "Mengekstrak data"],
+        "ms-MY": ["Menganalisis «{NOMBRE}»", "Membaca kandungan", "Mengekstrak data"],
+        "fil-PH": ["Sinusuri ang «{NOMBRE}»", "Binabasa ang nilalaman", "Kinukuha ang datos"],
+        "zh-CN": ["正在分析「{NOMBRE}」", "正在读取内容", "正在提取数据"],
+        "yue-Hant-HK": ["分析緊「{NOMBRE}」", "讀緊內容", "擷取緊資料"],
+        "ja-JP": ["「{NOMBRE}」を分析しています", "内容を読み込んでいます", "データを抽出しています"],
+        "ko-KR": ["「{NOMBRE}」 분석 중", "내용을 읽는 중", "데이터를 추출하는 중"],
+        "mn-MN": ["«{NOMBRE}»-г дүн шинжилгээ хийж байна", "Агуулгыг уншиж байна", "Өгөгдлийг гаргаж байна"],
+        "kk-KZ": ["«{NOMBRE}» талдап жатырмын", "Мазмұнын оқып жатырмын", "Деректер алынуда"],
+        "uz-UZ": ["«{NOMBRE}» tahlil qilmoqdaman", "Tarkibni o'qimoqdaman", "Ma'lumot olinmoqda"],
+        "tk-TM": ["«{NOMBRE}» seljerýärin", "Mazmunyny okaýaryn", "Maglumatlary çykarýaryn"],
+        "tg-TJ": ["Таҳлил мекунам «{NOMBRE}»", "Мундариҷаро мехонам", "Маълумотро мебарорам"],
+        "ka-GE": ["ვაანალიზებ «{NOMBRE}»-ს", "ვკითხულობ შიგთავსს", "ვახდენ მონაცემების ამოღებას"],
+        "hy-AM": ["Վերլուծում եմ «{NOMBRE}»-ը", "Կարդում եմ տեքստը", "Արտահանում եմ տվյալները"],
+        "az-AZ": ["«{NOMBRE}» təhlil edirəm", "Məzmunu oxuyuram", "Məlumatları çıxarıram"]
+    };
+    const DOC_TEMPI = [0, 2500, 6000];
+    // Codice esatto, poi stessa lingua con altra regione, poi spagnolo.
+    function frasiDoc(code) {
+        code = String(code || '');
+        if (DOC_PASSI[code]) return DOC_PASSI[code];
+        const base = code.split('-')[0].toLowerCase();
+        const k = Object.keys(DOC_PASSI).find(x => x.split('-')[0].toLowerCase() === base);
+        return DOC_PASSI[k || 'es-ES'];
+    }
+    function avviaAvanzamentoDoc(nome) {
+        const frasi = frasiDoc(activeLanguageCode);
+        const box = addMessageToChat('', 'bot-message typing-indicator doc-status', false, false);
+        const span = box && box.querySelector('.message-text');
+        if (span) span.textContent = frasi[0].replace('{NOMBRE}', nome);
+        const timers = DOC_TEMPI.slice(1).map((ms, i) => setTimeout(() => {
+            if (span && box.isConnected) span.textContent = frasi[i + 1].replace('{NOMBRE}', nome);
+        }, ms));
+        return function fine() {
+            timers.forEach(clearTimeout);
+            if (box && box.isConnected) box.remove();
+        };
+    }
+    window.__docPassi = DOC_PASSI;
+
     window.handleDocSelected = function(input) {
         const file = input.files && input.files[0];
         input.value = '';
@@ -4393,6 +4734,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         // La scheda entra subito nella conversazione, in stato "leyendo".
         const card = addMessageToChat('[DOC: ' + file.name.replace(/[\[\]]/g, '') + ']', 'user-message', false, false);
         if (card) card.classList.add('doc-loading');
+        let fineAvanzamento = function() {};
+        try { fineAvanzamento = avviaAvanzamentoDoc(file.name.replace(/[\[\]]/g, '')); } catch (e) { /* mai bloccare la lettura */ }
         const reader = new FileReader();
         reader.onload = async function(e) {
             try {
@@ -4406,6 +4749,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                 try { safeStorage.setSession(DOC_KEY(currentSessionId), JSON.stringify({ nombre, texto: data.texto })); } catch (err) {}
                 document.querySelectorAll('.doc-card').forEach(c => c.classList.remove('doc-retirado'));
                 if (card) card.classList.remove('doc-loading');
+                fineAvanzamento();
                 const conferma = data.confirmacion || ('He analizado el documento «' + nombre + '». Estoy listo: pregúntame lo que quieras saber.');
                 conversationHistory.push({ role: 'user', content: '[DOC: ' + nombre + ']' });
                 conversationHistory.push({ role: 'assistant', content: conferma });
@@ -4413,11 +4757,12 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                 addMessageToChat(conferma, 'bot-message', true, true);
                 try { const ui = document.getElementById('user-input'); if (ui) ui.focus(); } catch (err) {}
             } catch (err) {
+                fineAvanzamento();
                 if (card) card.remove();
                 addMessageToChat(err.message || 'No he podido leer el documento.', 'bot-message', false, false);
             }
         };
-        reader.onerror = function() { if (card) card.remove(); };
+        reader.onerror = function() { fineAvanzamento(); if (card) card.remove(); };
         reader.readAsDataURL(file);
     };
 
