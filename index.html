@@ -4097,23 +4097,38 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     const svState = { offered: new Set(), rejected: new Set(), pending: null };
     window.__svState = svState;
     function svKey(sv) { return sv.pano + '|' + String(sv.label || '').toLowerCase(); }
-    function svMapsUrl(sv) {
-        // Maps URLs documentati: map_action=pano con pano e viewpoint.
-        let u = 'https://www.google.com/maps/@?api=1&map_action=pano&pano=' + encodeURIComponent(sv.pano) + '&viewpoint=' + sv.lat + ',' + sv.lng;
-        if (sv.heading !== null) u += '&heading=' + Math.round(sv.heading);
-        return u;
-    }
     let svLoader = null;
-    function loadMapsApi() {
-        if (window.google && google.maps && google.maps.importLibrary) return Promise.resolve();
+    // Chiave del browser: da /api/init all'avvio; se manca (pagina aperta prima
+    // della configurazione, risposta persa) si chiede adesso al server.
+    async function ensureStreetViewKey() {
+        if (streetViewKey) return streetViewKey;
+        const r = await fetch(`${API_BASE}/api/streetview/config`);
+        const d = await r.json().catch(() => ({}));
+        if (d && typeof d.key === 'string' && d.key) streetViewKey = d.key;
+        if (!streetViewKey) throw new Error('chiave del browser non configurata sul server');
+        return streetViewKey;
+    }
+    // Chiave rifiutata da Google (sito non ammesso, API non attiva, fatturazione):
+    // Google chiama questa funzione. La causa resta nella console del browser.
+    window.gm_authFailure = function() {
+        console.error('[vista 360] Google ha rifiutato la chiave del browser: controlla sito ammesso (https://monili-vlr.github.io/*), Maps JavaScript API attiva e fatturazione.');
+        document.querySelectorAll('.sv-card .sv-pano').forEach(pn => {
+            const card = pn.closest('.sv-card'); pn.remove();
+            if (card && !card.querySelector('.sv-fail')) { const f = document.createElement('div'); f.className = 'sv-note sv-fail'; f.textContent = svTxt().fail; card.appendChild(f); }
+        });
+    };
+    async function loadMapsApi() {
+        if (window.google && google.maps && google.maps.importLibrary) return;
         if (svLoader) return svLoader;
-        if (!streetViewKey) return Promise.reject(new Error('sin clave'));
+        await ensureStreetViewKey();
+        if (window.google && google.maps && google.maps.importLibrary) return;
+        if (svLoader) return svLoader;
         svLoader = new Promise((resolve, reject) => {
             window.__vtxMapsReady = () => resolve();
             const sc = document.createElement('script');
             sc.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(streetViewKey) + '&v=weekly&loading=async&callback=__vtxMapsReady';
             sc.async = true;
-            sc.onerror = () => { svLoader = null; reject(new Error('Maps JS non caricato')); };
+            sc.onerror = () => { svLoader = null; reject(new Error('script della Maps JavaScript API non caricato (rete o blocco del browser)')); };
             document.head.appendChild(sc);
         });
         return svLoader;
@@ -4156,8 +4171,6 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const ask = card.querySelector('.sv-ask'); if (ask) ask.remove();
         const pano = document.createElement('div'); pano.className = 'sv-pano';
         card.insertBefore(pano, card.firstChild);
-        const link = document.createElement('a'); link.className = 'reserva-btn secondary sv-open'; link.href = svMapsUrl(sv); link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = t.open;
-        card.appendChild(link);
         try { autoScroll(getChatMessages()); } catch (e) {}
         try {
             await loadMapsApi();
@@ -4165,9 +4178,10 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             const opts = { pano: sv.pano, pov: { heading: sv.heading === null ? 0 : sv.heading, pitch: 0 }, zoom: 0, motionTracking: false, motionTrackingControl: false, addressControl: false, fullscreenControl: true, linksControl: true, panControl: true, zoomControl: true };
             card._panorama = new lib.StreetViewPanorama(pano, opts);
         } catch (e) {
+            console.error('[vista 360] panorama non caricato:', e && e.message ? e.message : e);
             pano.remove();
-            const f = document.createElement('div'); f.className = 'sv-note'; f.textContent = t.fail;
-            card.insertBefore(f, link);
+            const f = document.createElement('div'); f.className = 'sv-note sv-fail'; f.textContent = t.fail;
+            card.appendChild(f);
         }
     }
     // "si'" / "no" scritti in chat mentre c'e' una proposta aperta.
