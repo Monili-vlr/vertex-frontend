@@ -430,6 +430,17 @@ body {
 }
 
 .dish-img-wrap { display: block; margin: 10px 0; }
+/* Autore della foto (obbligatorio per le foto di Google Places) */
+.photo-credit { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.photo-credit a { color: inherit; text-decoration: underline; }
+.doc-download { margin-top: 12px; }
+/* Mappa del percorso (Maps Embed API) + pulsante di navigazione (Maps URLs) */
+.map-card { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
+.map-frame { display: block; width: 100%; aspect-ratio: 16 / 9; height: auto; max-height: 42vh; max-width: min(100%, calc(42vh * 16 / 9)); flex-basis: auto; border: 0; border-radius: 14px; background: #E7E3DB; }
+.map-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.map-modes .reserva-btn { min-width: 52px; font-size: 18px; padding-left: 14px; padding-right: 14px; }
+.map-modes .reserva-btn.active { box-shadow: 0 0 0 2px currentColor inset; }
+.map-card a.reserva-btn { align-self: flex-start; }
 .no-molestar-btn { display: inline-block; justify-self: start; margin-top: 4px; padding: 6px 14px; font-size: 11.5px; font-family: var(--font); color: var(--text-soft); background: transparent; border: 1px solid var(--hairline); border-radius: 999px; cursor: pointer; transition: all 0.2s; }
 .no-molestar-btn:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
 .no-molestar-btn:disabled { opacity: 0.7; cursor: default; }
@@ -1329,6 +1340,11 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     // (il backend lo ignora); il modello lo decide sempre il server.
     // Indirizzo del backend su Render (senza barra finale).
     const API_BASE = 'https://vertex-valencia.onrender.com';
+    // Versione del frontend: la prova di fumo (scripts/smoke.js del backend) la
+    // legge dalla pagina pubblicata per sapere se il file giusto e' online.
+    const VERTEX_FRONTEND_VERSION = '2026-09-24-mappa';
+    window.VERTEX_FRONTEND_VERSION = VERTEX_FRONTEND_VERSION;
+    console.info('[vertex] frontend ' + VERTEX_FRONTEND_VERSION);
     const LOCAL_ID = "vertex_valencia";
 
     // ===== GOOGLE LOGIN (dentro il pannello GDPR, come shaq) =====
@@ -3964,16 +3980,33 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const heading = p[2] === '' ? null : Number(p[2]);
         return { pano: p[0], lat: ll[0], lng: ll[1], heading: Number.isFinite(heading) ? heading : null, distance: Number(p[3]) || 0, label: p.slice(4).join(' ').slice(0, 120) };
     }
+    // [MAPA: lat,lng | lat,lng | modo | origine|mine | destino] -> mappa del percorso
+    const MAPA_REGEX = /\[MAPA:\s*([^\]]+)\]/gi;
+    const MAP_MODES = ['walking', 'transit', 'bicycling'];
+    function parseMapa(body) {
+        const p = String(body || '').split('|').map(x => x.trim());
+        if (p.length < 5) return null;
+        const ll = (t) => { const a = t.split(',').map(Number); return a.length === 2 && a.every(Number.isFinite) && Math.abs(a[0]) <= 90 && Math.abs(a[1]) <= 180 ? { lat: a[0], lng: a[1] } : null; };
+        const o = ll(p[0]); const d = ll(p[1]);
+        if (!o || !d) return null;
+        return { o, d, mode: MAP_MODES.includes(p[2]) ? p[2] : 'transit', fromUser: p[3] === 'mine', oLabel: p[3].slice(0, 80), dLabel: p.slice(4).join(' ').slice(0, 80) };
+    }
+    // [DOCUMENTO: pdf|docx | titolo] -> pulsante che scarica la risposta come file
+    const DOCUMENTO_REGEX = /\[DOCUMENTO:\s*(pdf|docx)\s*(?:\|\s*([^\]]*))?\]/gi;
     function extractReservaLinks(text) {
         const reservas = [];
         let streetView = null;
+        let documento = null;
+        let mapa = null;
+        text = String(text || '').replace(MAPA_REGEX, (m, body) => { if (!mapa) mapa = parseMapa(body); return ''; });
+        text = String(text || '').replace(DOCUMENTO_REGEX, (m, f, t) => { if (!documento) documento = { formato: f.toLowerCase(), titulo: String(t || '').trim().slice(0, 100) }; return ''; });
         text = String(text || '').replace(STREETVIEW_REGEX, (m, body) => { if (!streetView) streetView = parseStreetView(body); return ''; });
         const cleanText = String(text || '').replace(RESERVA_REGEX, (m, url, label) => {
             url = (url || '').trim();
             if (reservaUrlOk(url) && reservas.length < 3) reservas.push({ url, label: (label || '').trim().slice(0, 60) });
             return '';
         }).replace(/\n{3,}/g, '\n\n').trim();
-        return { cleanText, reservas, streetView };
+        return { cleanText, reservas, streetView, documento, mapa };
     }
     function injectReservaButtons(messageEl, reservas) {
         if (!messageEl || !reservas || !reservas.length) return;
@@ -4289,7 +4322,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     const SEGNALAZIONE_RE = new RegExp('(?:^|[^a-z0-9])(?:' + SEGNALAZIONE_GUASTO.concat(SEGNALAZIONE_ENFADO)
         .map(w => w.replace(/ /g, '\\s+')).join('|') + ')(?![a-z0-9])');
     function rilevaSegnalazione(text) {
-        const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/(?:captura de pantalla|captura|screenshot|schermata)?[ \t\d_.:-]*[^\s"'(),;]*\.(?:pdf|png|jpe?g|webp|gif|docx?|txt|csv|json|ics|heic)\b/g, ' ');
         return SEGNALAZIONE_RE.test(t);
     }
     window.rilevaSegnalazione = rilevaSegnalazione;
@@ -4401,7 +4435,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: cleanFinal0, videoIds } = extractYouTubeLinks(cleanCalendly);
         // estrai il marcatore [CTA: url] del pedido -> diventera' un checkout demo
         const { cleanText: cleanFinalR, ctaUrl } = extractCTALink(cleanFinal0);
-        const { cleanText: cleanFinal, reservas, streetView } = extractReservaLinks(cleanFinalR);
+        const { cleanText: cleanFinal, reservas, streetView, documento, mapa } = extractReservaLinks(cleanFinalR);
         let currentText = textSpan.innerText;
         const deleteInterval = setInterval(() => {
             if (!typingEl.isConnected) { clearInterval(deleteInterval); activeTypingIntervals = activeTypingIntervals.filter(id => id !== deleteInterval); return; }
@@ -4482,6 +4516,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                         if (ctaUrl) { injectCheckoutDemo(typingEl, ctaUrl); autoScroll(cm); }
                         if (reservas && reservas.length) { injectReservaButtons(typingEl, reservas); autoScroll(cm); }
                         if (streetView) { injectStreetViewOffer(typingEl, streetView); autoScroll(cm); }
+                        if (documento) { injectDocumentButton(typingEl, documento); autoScroll(cm); }
+                        if (mapa) { injectMapCard(typingEl, mapa); autoScroll(cm); }
                         // fallback: SOLO se restano davvero segnaposto §§IMGn§§ non
                         // sostituiti (es. typing interrotto). Durante il typing sopra
                         // (riga §§IMG) le immagini vengono gia inserite: richiamare qui
@@ -4527,7 +4563,7 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         const { cleanText: cleanCalendlyMsg, calendlyUrl: msgCalendlyUrl } = extractCalendlyLink(imgCleanedMsg);
         const { cleanText: cleanTextToType0, videoIds: msgVideoIds } = extractYouTubeLinks(cleanCalendlyMsg);
         const { cleanText: cleanTextToTypeR, ctaUrl: msgCtaUrl } = extractCTALink(cleanTextToType0);
-        const { cleanText: cleanTextToType, reservas: msgReservas, streetView: msgStreetView } = extractReservaLinks(cleanTextToTypeR);
+        const { cleanText: cleanTextToType, reservas: msgReservas, streetView: msgStreetView, documento: msgDocumento, mapa: msgMapa } = extractReservaLinks(cleanTextToTypeR);
         if (isBotReply && !className.includes('typing-indicator')) {
             messageDiv.insertAdjacentHTML('beforeend', `
                 <div class="bot-actions-container" ${animate ? 'style="display:none;"' : ''}>
@@ -4574,6 +4610,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             if (msgCtaUrl) injectCheckoutDemo(messageDiv, msgCtaUrl);
             if (msgReservas && msgReservas.length) injectReservaButtons(messageDiv, msgReservas);
             if (msgStreetView) injectStreetViewOffer(messageDiv, msgStreetView, false);
+            if (msgDocumento) injectDocumentButton(messageDiv, msgDocumento);
+            if (msgMapa) injectMapCard(messageDiv, msgMapa);
         } else if (!className.includes('typing-indicator')) {
             const units = segmentsToUnits(parseMarkdownSegments(cleanTextToType));
             textSpan._mdOpen = null;
@@ -4595,6 +4633,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
                     if (msgImageUrls && msgImageUrls.length) { replaceImagePlaceholders(messageDiv, msgImageUrls); autoScroll(currentCm); }
                     if (msgReservas && msgReservas.length) { injectReservaButtons(messageDiv, msgReservas); autoScroll(currentCm); }
                     if (msgStreetView) { injectStreetViewOffer(messageDiv, msgStreetView); autoScroll(currentCm); }
+                    if (msgDocumento) { injectDocumentButton(messageDiv, msgDocumento); autoScroll(currentCm); }
+                    if (msgMapa) { injectMapCard(messageDiv, msgMapa); autoScroll(currentCm); }
                 }
             }, intervalMs);
             activeTypingIntervals.push(typing);
@@ -4800,6 +4840,80 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         document.body.appendChild(ov);
         return ov;
     }
+    // Pulsante del documento creato dal bot: stesso download del pulsante ⬇,
+    // con il testo della risposta e il titolo scelto dal bot. Etichetta senza
+    // parole (formato + freccia): uguale in tutte le 84 lingue.
+    function injectDocumentButton(messageEl, doc) {
+        if (!messageEl || !doc) return;
+        const wrapper = messageEl.querySelector('.message-content-wrapper');
+        if (!wrapper || wrapper.querySelector('.doc-download')) return;
+        const row = document.createElement('div'); row.className = 'doc-download';
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'reserva-btn doc-download-btn';
+        b.textContent = doc.formato.toUpperCase() + ' ⬇';
+        b.title = doc.titulo || doc.formato.toUpperCase();
+        b.onclick = () => {
+            const textEl = messageEl.querySelector('.message-text');
+            exportText = textEl ? textEl.innerText.trim() : '';
+            if (exportText) downloadExport(doc.formato, doc.titulo);
+        };
+        row.appendChild(b); wrapper.appendChild(row);
+    }
+    window.injectDocumentButton = injectDocumentButton;
+
+    // ---- MAPPA DEL PERCORSO + NAVIGAZIONE ----------------------------------
+    // Mappa: Maps Embed API (gratuita), stessa chiave del browser della vista
+    // 360° (deve ammettere anche "Maps Embed API"). Navigazione: Maps URLs con
+    // dir_action=navigate (nessuna chiave): senza origine Google parte dal GPS
+    // del telefono e avvia la guida svolta per svolta nell'app Google Maps.
+    // Etichette senza parole (icone e marchio): uguali in tutte le 84 lingue.
+    function mapNavUrl(m, mode) {
+        let u = 'https://www.google.com/maps/dir/?api=1&destination=' + m.d.lat + ',' + m.d.lng + '&travelmode=' + mode + '&dir_action=navigate';
+        if (!m.fromUser) u += '&origin=' + m.o.lat + ',' + m.o.lng;
+        return u;
+    }
+    function mapEmbedUrl(m, mode, key) {
+        return 'https://www.google.com/maps/embed/v1/directions?key=' + encodeURIComponent(key) + '&origin=' + m.o.lat + ',' + m.o.lng + '&destination=' + m.d.lat + ',' + m.d.lng + '&mode=' + mode;
+    }
+    function injectMapCard(messageEl, m) {
+        if (!messageEl || !m) return;
+        const wrapper = messageEl.querySelector('.message-content-wrapper');
+        if (!wrapper || wrapper.querySelector('.map-card')) return;
+        const card = document.createElement('div'); card.className = 'map-card';
+        let mode = m.mode;
+        const frame = document.createElement('iframe');
+        frame.className = 'map-frame'; frame.loading = 'lazy'; frame.allowFullscreen = true;
+        frame.referrerPolicy = 'no-referrer-when-downgrade';
+        frame.title = (m.dLabel || 'Google Maps');
+        const nav = document.createElement('a');
+        nav.className = 'reserva-btn map-nav'; nav.target = '_blank'; nav.rel = 'noopener noreferrer';
+        nav.textContent = '▶ Google Maps';
+        const modes = document.createElement('div'); modes.className = 'map-modes';
+        const ICONS = { walking: '🚶', transit: '🚌', bicycling: '🚲' };
+        let key = null;
+        const render = () => {
+            nav.href = mapNavUrl(m, mode);
+            modes.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+            if (key) frame.src = mapEmbedUrl(m, mode, key);
+        };
+        MAP_MODES.forEach(md => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'reserva-btn secondary'; b.dataset.mode = md;
+            b.textContent = ICONS[md]; b.setAttribute('aria-label', md);
+            b.onclick = () => { mode = md; render(); };
+            modes.appendChild(b);
+        });
+        card.appendChild(modes); card.appendChild(nav);
+        wrapper.appendChild(card);
+        render();
+        // La mappa compare quando c'e' la chiave; senza, resta il pulsante di navigazione.
+        ensureStreetViewKey().then(k => {
+            key = k;
+            if (!card.isConnected) return;
+            card.insertBefore(frame, card.firstChild);
+            render();
+            try { autoScroll(getChatMessages()); } catch (e) {}
+        }).catch(e => console.error('[mappa] nessuna chiave del browser:', e && e.message ? e.message : e));
+    }
+    window.injectMapCard = injectMapCard;
     window.openExportDialog = function(btn) {
         const msg = btn.closest('.message');
         const textEl = msg && msg.querySelector('.message-text');
@@ -4807,10 +4921,10 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
         if (!exportText) return;
         ensureExportDialog().classList.add('visible');
     };
-    async function downloadExport(formato) {
+    async function downloadExport(formato, tituloDoc) {
         try {
             const d = new Date();
-            const titulo = 'Vertex València · ' + d.toLocaleDateString();
+            const titulo = tituloDoc || ('Vertex València · ' + d.toLocaleDateString());
             const res = await fetch(API_BASE + '/api/export', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ formato, titulo, texto: exportText })
@@ -4820,7 +4934,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'vertex-valencia-' + d.toISOString().slice(0, 10) + '.' + formato;
+            const slug = tituloDoc ? String(tituloDoc).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) : '';
+            a.download = (slug || 'vertex-valencia-' + d.toISOString().slice(0, 10)) + '.' + formato;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -5103,7 +5218,8 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     // ---- YOUTUBE EMBED ----
     // Estrae i tag [IMG: url] dal testo del bot. Solo domini fidati (Wix media
     // e bucket Supabase del progetto), massimo 2 immagini per messaggio.
-    const IMG_DOMAINS = ['https://static.wixstatic.com/', 'https://dhjmdzobfytnzeagkmsx.supabase.co/', 'https://upload.wikimedia.org/'];
+    // lh3-lh6.googleusercontent.com: foto di Google Places (Place Photos New).
+    const IMG_DOMAINS = ['https://static.wixstatic.com/', 'https://dhjmdzobfytnzeagkmsx.supabase.co/', 'https://upload.wikimedia.org/', 'https://lh3.googleusercontent.com/', 'https://lh4.googleusercontent.com/', 'https://lh5.googleusercontent.com/', 'https://lh6.googleusercontent.com/'];
     // Rete di sicurezza: se il modello sbaglia formato (markdown ![](url),
     // link markdown [txt](url) o URL-immagine nudo verso un dominio fidato),
     // lo normalizziamo nel tag [IMG: url] prima dell'estrazione. Niente
@@ -5158,17 +5274,33 @@ html.vtx-hopping .chat-main-area { overflow: visible; }
     // non carica. onload -> classe .loaded (fade-in); onerror -> .failed (toglie
     // lo skeleton, niente riquadro vuoto). Handler inline per funzionare anche
     // sulle img inserite via innerHTML.
+    const escHtml = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     function buildDishImg(u) {
         // [SEC] whitelist protocollo + escape COMPLETO (non solo le virgolette):
         // gli URL delle foto transitano dal modello, mai fidarsi a meta'.
-        const raw = String(u || '');
+        let raw = String(u || '');
         if (!/^https?:\/\//i.test(raw)) return '';
-        const safe = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        // Autore della foto nel frammento (#vtx_a=nome&vtx_u=profilo): obbligatorio
+        // per le foto di Google, mostrato sotto la foto; il frammento non va a Google.
+        let credit = '';
+        const hashAt = raw.indexOf('#vtx_a=');
+        if (hashAt !== -1) {
+            const params = new URLSearchParams(raw.slice(hashAt + 1));
+            raw = raw.slice(0, hashAt);
+            const who = (params.get('vtx_a') || '').slice(0, 60);
+            const prof = params.get('vtx_u') || '';
+            if (who) {
+                credit = /^https:\/\/(www\.)?(maps\.)?google\.[a-z.]+\//i.test(prof)
+                    ? '<span class="photo-credit">📷 <a href="' + escHtml(prof) + '" target="_blank" rel="noopener noreferrer">' + escHtml(who) + '</a></span>'
+                    : '<span class="photo-credit">📷 ' + escHtml(who) + '</span>';
+            }
+        }
+        const safe = escHtml(raw);
         return '<span class="dish-img-wrap web-photo-frame"><span class="dish-img-skel">'
             + '<img class="dish-img" loading="lazy" alt="" src="' + safe + '"'
             + ' onload="this.parentNode.classList.add(\'loaded\')"'
-            + ' onerror="this.parentNode.classList.add(\'failed\')"></span></span>';
+            + ' onerror="this.parentNode.classList.add(\'failed\')"></span>' + credit + '</span>';
     }
     // Rete di sicurezza: se un'immagine era gia' in cache, onload puo' essere
     // scattato prima dell'handler. Periodicamente promuoviamo le img complete.
